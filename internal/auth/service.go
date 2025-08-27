@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
+	"quickdocs/config"
 	"quickdocs/internal/cache"
 	"quickdocs/internal/db"
 	passwords "quickdocs/pkg"
@@ -41,6 +43,13 @@ func NewService(repo db.UserRepository, store *cache.SessionStore) *Service {
 
 // Создаём нового пользователя
 func (s *Service) RegisterUser(ctx context.Context, login, password string) error {
+	// login: мин. 8, латиница и цифры
+	if len(login) < 8 {
+		return fmt.Errorf("логин должен быть не короче 8 символов")
+	}
+	if !regexp.MustCompile(`^[A-Za-z0-9]+$`).MatchString(login) {
+		return fmt.Errorf("логин должен содержать только латиницу и цифры")
+	}
 
 	if err := passwords.ValidatePassword(password); err != nil {
 		return err
@@ -63,7 +72,7 @@ func (s *Service) RegisterUser(ctx context.Context, login, password string) erro
 func (s *Service) ValidateToken(ctx context.Context, token string) (*User, error) {
 	userID, err := s.store.GetUserID(ctx, token)
 	if err != nil {
-		return nil, errors.New("Недействительный или просроченный токен")
+		return nil, errors.New("недействительный или просроченный токен")
 	}
 
 	login, err := s.userRepo.GetLoginByID(ctx, userID)
@@ -95,4 +104,12 @@ func (s *Service) GenerateToken(login string) (string, error) {
 	}
 
 	return token, nil
+}
+
+// CheckAdminToken сверяет переданный токен с конфигом
+func (s *Service) CheckAdminToken(ctx context.Context, token string) error {
+	if token == "" || token != config.Cfg.AdminToken {
+		return errors.New("недействительный токен администратора")
+	}
+	return nil
 }

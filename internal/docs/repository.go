@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/google/uuid"
+	"fmt"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Repository struct {
@@ -21,6 +24,8 @@ type DocumentRepository interface {
 	ListAll(ctx context.Context) ([]Document, error)
 	ListByUser(ctx context.Context, userID int) ([]Document, error)
 	GetDocumentByID(ctx context.Context, docID string) (*Document, error)
+	ListForUserFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)
+	ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)
 }
 
 func NewRepository(db *sql.DB) *Repository {
@@ -32,22 +37,22 @@ func (r *Repository) Create(ctx context.Context, doc *Document) error {
 		doc.Created = time.Now()
 	}
 
-	query := `INSERT INTO documents (id, owner_id, name, mime, has_file, is_public, created_at)
-			  VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	query := `INSERT INTO documents (id, owner_id, name, mime, has_file, is_public, json_data, created_at)
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err := r.db.ExecContext(ctx, query,
 		doc.ID, doc.OwnerID, doc.Name, doc.Mime,
-		doc.File, doc.Public, doc.Created)
+		doc.File, doc.Public, doc.JsonData, doc.Created)
 
 	return err
 }
 
 func (r *Repository) Get(ctx context.Context, id uuid.UUID) (*Document, error) {
-	query := `SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents WHERE id = $1`
+	query := `SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents WHERE id = $1`
 	row := r.db.QueryRowContext(ctx, query, id)
 
 	var d Document
-	err := row.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created)
+	err := row.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -65,7 +70,7 @@ func (r *Repository) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (r *Repository) ListAll(ctx context.Context) ([]Document, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents ORDER BY created_at DESC`)
+		`SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +79,7 @@ func (r *Repository) ListAll(ctx context.Context) ([]Document, error) {
 	var docs []Document
 	for rows.Next() {
 		var d Document
-		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created); err != nil {
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -84,7 +89,7 @@ func (r *Repository) ListAll(ctx context.Context) ([]Document, error) {
 
 func (r *Repository) List(ctx context.Context, limit, offset int) ([]*Document, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
+		`SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents ORDER BY created_at DESC LIMIT $1 OFFSET $2`,
 		limit, offset)
 	if err != nil {
 		return nil, err
@@ -94,7 +99,7 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*Document, 
 	var docs []*Document
 	for rows.Next() {
 		var d Document
-		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created); err != nil {
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
 			return nil, err
 		}
 		docs = append(docs, &d)
@@ -104,7 +109,7 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*Document, 
 
 func (r *Repository) ListForUser(ctx context.Context, userID int, limit, offset int) ([]*Document, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents
+		`SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents
 		 WHERE owner_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
 		userID, limit, offset)
 	if err != nil {
@@ -115,7 +120,7 @@ func (r *Repository) ListForUser(ctx context.Context, userID int, limit, offset 
 	var docs []*Document
 	for rows.Next() {
 		var d Document
-		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created); err != nil {
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
 			return nil, err
 		}
 		docs = append(docs, &d)
@@ -125,7 +130,7 @@ func (r *Repository) ListForUser(ctx context.Context, userID int, limit, offset 
 
 func (r *Repository) ListByUser(ctx context.Context, userID int) ([]Document, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents WHERE owner_id = $1`, userID)
+		`SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents WHERE owner_id = $1`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +139,7 @@ func (r *Repository) ListByUser(ctx context.Context, userID int) ([]Document, er
 	var docs []Document
 	for rows.Next() {
 		var d Document
-		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created); err != nil {
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
 			return nil, err
 		}
 		docs = append(docs, d)
@@ -143,11 +148,11 @@ func (r *Repository) ListByUser(ctx context.Context, userID int) ([]Document, er
 }
 
 func (r *Repository) GetDocumentByID(ctx context.Context, docID string) (*Document, error) {
-	query := `SELECT id, owner_id, name, mime, has_file, is_public, created_at FROM documents WHERE id = $1`
+	query := `SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents WHERE id = $1`
 	row := r.db.QueryRowContext(ctx, query, docID)
 
 	var d Document
-	err := row.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.Created)
+	err := row.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -156,4 +161,95 @@ func (r *Repository) GetDocumentByID(ctx context.Context, docID string) (*Docume
 	}
 
 	return &d, nil
+}
+
+func (r *Repository) ListForUserFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
+	where := []string{"owner_id = $1"}
+	args := []interface{}{userID}
+
+	// белый список ключей
+	switch key {
+	case "", "name", "mime", "has_file", "is_public":
+		if key != "" && value != "" {
+			where = append(where, fmt.Sprintf("%s = $%d", key, len(args)+1))
+			args = append(args, value)
+		}
+	default:
+		// игнорируем неизвестный ключ
+	}
+
+	// сортировка
+	col := "created_at"
+	if sortBy == "name" {
+		col = "name"
+	}
+	ord := "DESC"
+	if strings.ToUpper(order) == "ASC" {
+		ord = "ASC"
+	}
+
+	args = append(args, limit, offset)
+	query := fmt.Sprintf(`SELECT id, owner_id, name, mime, has_file, is_public, json_data, created_at FROM documents
+		WHERE %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		strings.Join(where, " AND "), col, ord, len(args)-1, len(args))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []*Document
+	for rows.Next() {
+		var d Document
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
+			return nil, err
+		}
+		docs = append(docs, &d)
+	}
+	return docs, nil
+}
+
+func (r *Repository) ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
+	where := []string{"u.login = $1", "d.is_public = true"}
+	args := []interface{}{login}
+
+	switch key {
+	case "", "name", "mime", "has_file":
+		if key != "" && value != "" {
+			where = append(where, fmt.Sprintf("d.%s = $%d", key, len(args)+1))
+			args = append(args, value)
+		}
+	}
+
+	col := "d.created_at"
+	if sortBy == "name" {
+		col = "d.name"
+	}
+	ord := "DESC"
+	if strings.ToUpper(order) == "ASC" {
+		ord = "ASC"
+	}
+
+	args = append(args, limit, offset)
+	query := fmt.Sprintf(`SELECT d.id, d.owner_id, d.name, d.mime, d.has_file, d.is_public, d.json_data, d.created_at
+		FROM documents d JOIN users u ON d.owner_id = u.id
+		WHERE %s ORDER BY %s %s LIMIT $%d OFFSET $%d`,
+		strings.Join(where, " AND "), col, ord, len(args)-1, len(args))
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []*Document
+	for rows.Next() {
+		var d Document
+		if err := rows.Scan(&d.ID, &d.OwnerID, &d.Name, &d.Mime, &d.File, &d.Public, &d.JsonData, &d.Created); err != nil {
+			return nil, err
+		}
+		docs = append(docs, &d)
+	}
+	return docs, nil
 }

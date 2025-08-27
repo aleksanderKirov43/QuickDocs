@@ -1,9 +1,10 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"net/http"
 
 	"quickdocs/internal/auth"
 	"quickdocs/internal/docs"
@@ -26,13 +27,12 @@ func New(authH *auth.Handler, docsH *docs.Handler) http.Handler {
 		pr.Delete("/api/auth/{token}", authH.Logout)
 
 		pr.Route("/api/docs", func(dr chi.Router) {
-			dr.Get("/", docsH.ListAll)               // Получение всех документов
-			dr.Get("/user/{userID}", docsH.List)     // Получение документов отдельного пользователя
-			dr.Head("/user", docsH.HeadSessionCheck) // HEAD для проверки авторизации
-			dr.Get("/{id}", docsH.Get)               // Получение документа по id
-			dr.Head("/{id}", docsH.Head)             // HEAD для проверки существования документа по id
-			dr.Post("/upload", docsH.Upload)         // Загрузка документа
-			dr.Delete("/{id}", docsH.Delete)         // Удаление документа
+			dr.Get("/", docsH.List) // список (свой/по фильтрам)
+			dr.Head("/", docsH.HeadSessionCheck)
+			dr.Post("/", docsH.Upload)   // загрузка
+			dr.Get("/{id}", docsH.Get)   // получение
+			dr.Head("/{id}", docsH.Head) // HEAD документа
+			dr.Delete("/{id}", docsH.Delete)
 		})
 	})
 

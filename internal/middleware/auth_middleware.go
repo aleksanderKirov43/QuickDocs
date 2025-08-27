@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"quickdocs/internal/auth"
+	"quickdocs/internal/responses"
 )
 
 type ctxKey string
@@ -31,23 +32,38 @@ func NewAuthMiddleware(authService *auth.Service) *AuthMiddleware {
 
 func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// request id
+		reqID := r.Header.Get("X-Request-ID")
+		if reqID == "" {
+			reqID = generateRequestID()
+		}
+		r = r.WithContext(context.WithValue(r.Context(), ctxKey("reqID"), reqID))
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(w, "Неавторизованный: отсутствует заголовок Authorization header", http.StatusUnauthorized)
-			return
+		token := ""
+
+		// ТЗ допускает токен как параметр token
+		if q := r.URL.Query().Get("token"); q != "" {
+			token = q
 		}
 
-		const bearerPrefix = "Bearer "
-		if !strings.HasPrefix(authHeader, bearerPrefix) {
-			http.Error(w, "Недопустимый формат токена", http.StatusUnauthorized)
-			return
+		if token == "" {
+			if authHeader == "" {
+				responses.Error200(w, http.StatusUnauthorized, "Неавторизованный: отсутствует токен")
+				return
+			}
+
+			const bearerPrefix = "Bearer "
+			if !strings.HasPrefix(authHeader, bearerPrefix) {
+				responses.Error200(w, http.StatusUnauthorized, "Недопустимый формат токена")
+				return
+			}
+			token = strings.TrimPrefix(authHeader, bearerPrefix)
 		}
-		token := strings.TrimPrefix(authHeader, bearerPrefix)
 
 		log.Println("Токен сгенерирован:", token)
 		user, err := am.authService.ValidateToken(r.Context(), token)
 		if err != nil {
-			http.Error(w, "Полдьзователь не авторизован", http.StatusUnauthorized)
+			responses.Error200(w, http.StatusUnauthorized, "Полдьзователь не авторизован")
 			return
 		}
 
@@ -60,4 +76,9 @@ func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 func GetUserID(ctx context.Context) (int, bool) {
 	id, ok := ctx.Value(userIDKey).(int)
 	return id, ok
+}
+
+func GetLogin(ctx context.Context) (string, bool) {
+	login, ok := ctx.Value(loginKey).(string)
+	return login, ok
 }

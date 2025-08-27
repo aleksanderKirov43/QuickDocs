@@ -2,8 +2,8 @@ package auth
 
 import (
 	"encoding/json"
-
 	"net/http"
+	"quickdocs/internal/responses"
 	passwords "quickdocs/pkg"
 
 	"github.com/go-chi/chi/v5"
@@ -13,21 +13,6 @@ type Handler struct {
 	Service *Service
 }
 
-//type LoginRequest struct {
-//	Login string `json:"login"`
-//	Pswd  string `json:"pswd"`
-//}
-//
-//type LoginResponse struct {
-//	Response *struct {
-//		Token string `json:"token"`
-//	} `json:"response,omitempty"`
-//	Error *struct {
-//		Code int    `json:"code"`
-//		Text string `json:"text"`
-//	} `json:"error,omitempty"`
-//}
-
 func NewHandler(s *Service) *Handler {
 	return &Handler{Service: s}
 }
@@ -35,85 +20,74 @@ func NewHandler(s *Service) *Handler {
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "Недействительный JSON")
+		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, "Недействительный JSON")
+		return
+	}
+
+	// Проверяем админ-токен согласно ТЗ
+	if err := h.Service.CheckAdminToken(r.Context(), req.Token); err != nil {
+		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, err.Error())
 		return
 	}
 
 	err := h.Service.RegisterUser(r.Context(), req.Login, req.Pswd)
 	if err != nil {
-		writeError(w, 400, err.Error())
+		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	resp := RegisterResponse{
-		Response: &RegisterData{Login: req.Login},
-	}
-	json.NewEncoder(w).Encode(resp)
+	responses.Ack(w, &RegisterData{Login: req.Login})
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeLoginError(w, 400, "Недействительный JSON")
-		return
+	ct := r.Header.Get("Content-Type")
+	if ct == "application/x-www-form-urlencoded" || ct == "application/x-www-form-urlencoded; charset=UTF-8" {
+		if err := r.ParseForm(); err == nil {
+			req.Login = r.FormValue("login")
+			req.Pswd = r.FormValue("pswd")
+		} else {
+			responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, "Некорректная форма")
+			return
+		}
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, "Недействительный JSON")
+			return
+		}
 	}
 	// Получаем ID и хэш пароля из БД
 	_, hash, err := h.Service.userRepo.GetUserByLogin(r.Context(), req.Login)
 	if err != nil {
-		writeLoginError(w, 401, "Неверный логин или пароль")
+		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
 		return
 	}
 	// Сравниваем пароль
 	if !passwords.ComparePassword(hash, req.Pswd) {
-		writeLoginError(w, 401, "Неверный логин или пароль")
+		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
 		return
 	}
 
 	token, err := h.Service.GenerateToken(req.Login)
 	if err != nil {
-		writeLoginError(w, 500, "Ошибка генерации токена")
+		responses.Fail(w, http.StatusInternalServerError, http.StatusInternalServerError, "Ошибка генерации токена")
 		return
 	}
-	resp := LoginResponse{
-		Response: &LoginData{Token: token},
-	}
-	json.NewEncoder(w).Encode(resp)
-}
-
-func writeLoginError(w http.ResponseWriter, code int, msg string) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(LoginResponse{
-		Error: &ErrorResponse{Code: code, Text: msg},
-	})
+	responses.Ack(w, &LoginData{Token: token})
 }
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	if token == "" {
-		writeLogoutError(w, 400, "Токен не передан")
+		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, "Токен не передан")
 		return
 	}
 
 	err := h.Service.Logout(r.Context(), token)
 	if err != nil {
-		writeLogoutError(w, 400, err.Error())
+		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	resp := map[string]interface{}{
-		"response": map[string]bool{
-			token: true,
-		},
-	}
-	json.NewEncoder(w).Encode(resp)
-}
-
-func writeLogoutError(w http.ResponseWriter, code int, msg string) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error": map[string]interface{}{
-			"code": code,
-			"text": msg,
-		},
-	})
+	responses.Ack(w, map[string]bool{token: true})
 }

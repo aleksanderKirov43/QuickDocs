@@ -25,6 +25,8 @@ type FileCache interface {
 	SetUserFiles(ctx context.Context, userID int, data string, ttl time.Duration) error
 	GetUserFiles(ctx context.Context, userID int) (string, error)
 	InvalidateUserFiles(ctx context.Context, userID int) error
+	SetFileBytes(ctx context.Context, userID int, docID string, data []byte, ttl time.Duration) error
+	GetFileBytes(ctx context.Context, userID int, docID string) ([]byte, error)
 }
 
 type RedisFileCache struct {
@@ -46,6 +48,10 @@ func (c *RedisFileCache) fileKey(userID int, docID string) string {
 
 func (c *RedisFileCache) userFilesKey(userID int) string {
 	return fmt.Sprintf("user:%d:files", userID)
+}
+
+func (c *RedisFileCache) fileBytesKey(userID int, docID string) string {
+	return fmt.Sprintf("filebytes:%d:%s", userID, docID)
 }
 
 func (c *RedisFileCache) SetFileMetadata(ctx context.Context, userID int, docID string, meta string, ttl time.Duration) error {
@@ -70,6 +76,14 @@ func (c *RedisFileCache) GetUserFiles(ctx context.Context, userID int) (string, 
 
 func (c *RedisFileCache) InvalidateUserFiles(ctx context.Context, userID int) error {
 	return c.client.Del(ctx, c.userFilesKey(userID)).Err()
+}
+
+func (c *RedisFileCache) SetFileBytes(ctx context.Context, userID int, docID string, data []byte, ttl time.Duration) error {
+	return c.client.Set(ctx, c.fileBytesKey(userID, docID), data, ttl).Err()
+}
+
+func (c *RedisFileCache) GetFileBytes(ctx context.Context, userID int, docID string) ([]byte, error) {
+	return c.client.Get(ctx, c.fileBytesKey(userID, docID)).Bytes()
 }
 
 func NewSessionStore(addr, password string, db int) *SessionStore {

@@ -1,117 +1,181 @@
 # QuickDocs
 
-**QuickDocs** — это REST API-сервис для загрузки, хранения и получения документов с поддержкой аутентификации пользователей, кешированием и разграничением доступа.
+REST API для загрузки, хранения и раздачи электронных документов с аутентификацией, кешированием и разграничением доступа.
 
-Проект написан на **Go**, реализован **в чистом виде без фреймворков**, с применением слоистой архитектуры, инициализацией зависимостей и использованием `Redis` и `PostgreSQL`.
-
----
-
-## Функциональность
-
-- Загрузка документов (с поддержкой файлов и метаданных)
-
-- Аутентификация (регистрация, логин, выход) с использованием токенов
-
-- Кеширование документов и метаданных в Redis для повышения производительности и снижения нагрузки на базу данных
-
-- Middleware для проверки доступа: только владелец документа может получить или управлять файлом
-
-- Поддержка HTTP методов GET и HEAD для эффективной работы с файлами и списками документов
-
-- Инвалидирование кеша при изменении данных (загрузка, удаление) с выборочным обновлением кеша
-
-- Пагинация при получении списков документов с параметрами limit и offset
-
-- PostgreSQL для хранения пользователей и метаданных документов
-
-- Redis для хранения сессий и кеширования данных документов
-
-- Простая, модульная и расширяемая архитектура с разделением ответственности по пакетам и слоям (handlers, service, repository, middleware)
+Стек: Go, PostgreSQL, Redis, chi.
 
 ---
-## Примеры API-запросов
 
-### Регистрация
+## Возможности
+
+- Регистрация пользователей (через ADMIN_TOKEN) и аутентификация (token)
+- Загрузка документов (multipart: meta/json/file)
+- Получение списков с фильтрами/сортировкой, пагинация
+- Выдача единичного документа: файл (с корректным MIME) или JSON
+- Кеширование GET/HEAD (метаданные, списки, байты файлов), выборочная инвалидация при изменениях
+- Единый формат ответов (см. ниже), HEAD без тела
+- Request-ID логирование для трассировки
+
+---
+## Формат ответов
+
+Всегда HTTP 200. Ошибки — в поле `error`.
+
+```
+{
+  "error": { "code": 401, "text": "неавторизован" },
+  "response": { ... },
+  "data": { ... }
+}
+```
+
+- Поля присутствуют только если заполнены
+- `response` — подтверждение действия (например, токен/булевы флаги)
+- `data` — содержимое (списки/JSON)
+
+---
+## Авторизация
+
+- Передавайте токен одним из способов:
+  - Заголовок: `Authorization: Bearer <token>`
+  - Query-параметр: `?token=<token>`
+
+---
+## Эндпоинты
+
+### 1) Регистрация
 ```
 POST /api/register
 Content-Type: application/json
 
 {
-"login": "testuser",
-"pswd": "secure123"
+  "token": "<ADMIN_TOKEN>",
+  "login": "userlogin",
+  "pswd":  "Aa1!aaaa"
 }
+
+-> 200 { "response": { "login": "userlogin" } }
 ```
 
-###  Авторизация
+Требования: login ≥ 8, латиница/цифры; пароль ≥ 8, буквы разных регистров, цифра, спецсимвол.
+
+### 2) Аутентификация
 ```
 POST /api/auth
-Content-Type: application/json
+Content-Type: application/json | application/x-www-form-urlencoded
 
-{
-  "login": "testuser",
-  "password": "secure123"
-}
-```
-### Загрузка документа (авторизован)
+{ "login": "userlogin", "pswd": "Aa1!aaaa" }
 
+-> 200 { "response": { "token": "..." } }
 ```
-POST /api/docs/upload
-Authorization:<session_token>
+
+### 3) Загрузка документа
+```
+POST /api/docs
+Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
-file=<ваш файл>
-meta=<{"public":true}> (или false, в зависимости от того публичный докукмент или нет)
+meta: {
+  "name": "photo.jpg",
+  "file": true,
+  "public": false,
+  "mime": "image/jpeg"
+}
+json: { ... }   // опционально
+file: <binary>
+
+-> 200 { "data": { "json": { ... }, "file": "photo.jpg" } }
 ```
-### Получение документа (по ID)
+
+### 4) Список документов
+```
+GET /api/docs?limit=10&offset=0&key=name&value=report&sort=created&order=desc
+Authorization: Bearer <token>
+
+-> 200 { "data": { "docs": [ ... ] } }
+```
+
+- Параметры: `limit`, `offset`, `key` (name|mime|has_file|is_public), `value`, `sort` (name|created), `order` (asc|desc)
+- Публичные документы другого пользователя: `GET /api/docs?login=other`
+
+HEAD /api/docs — 200 без тела (кэш прогревается).
+
+### 5) Один документ
 ```
 GET /api/docs/{id}
-Authorization: <session_token>
+Authorization: Bearer <token>
 ```
-### Получение всех документов 
-```
-GET /api/docs
-Authorization:<session_token>
-```
-### Получение всех документов отдельного пользователя по id
-```
-GET /api/docs/user/{userID}
-Authorization:<session_token>
-```
-### Удаление документа (по ID)
+
+- Если `file=true` — выдаётся файл (байты берутся из кэша, при промахе — с диска и кладутся в кэш)
+- Если JSON — `-> 200 { "data": { ... } }`
+
+HEAD /api/docs/{id} — нужные заголовки, без тела.
+
+### 6) Удаление документа
 ```
 DELETE /api/docs/{id}
-Authorization:<session_token>
-```
-### Проверка авторизации польлзователя
-```
-HEAD /api/docs/user
-Authorization:<session_token>
-```
-### Проверка cуществования документа
-```
-HEAD /api/docs/{id}
-Authorization:<session_token>
+Authorization: Bearer <token>
+
+-> 200 { "response": { "{id}": true } }
 ```
 
-
-###  Запуск
-
-#### Создайте файл конфигурации
-На основе .env.example создайте файл .env
+### 7) Завершение сессии
 ```
-Отредактируйте .env, указав:
-POSTGRES_DSN — данные подключения к вашей PostgreSQL базе;
-REDIS_ADDR, REDIS_PASSWORD — параметры Redis;
-ADMIN_TOKEN — секретный токен администратора.
+DELETE /api/auth/{token}
+
+-> 200 { "response": { "{token}": true } }
 ```
-Создайте БД docs_db заранее.
-Структуру разверните используя файл init.sql.
 
+---
+## Кэширование
 
-### ✅ TODO для продакшн-версии
+- Списки пользователя (`GET /api/docs`, offset=0) — Redis (JSON), ttl 5m
+- Метаданные документа — Redis (JSON), ttl 10m
+- Байты файла — Redis (binary), ttl 10m
+- Инвалидация: загрузка/удаление инвалидирует списки владельца и конкретный документ
 
-- [ ] Написать юнит-тесты для `auth.Service`, `docs.Service`
-- [ ] Контейнеризация
+---
+## Запуск
+
+1) Настройте переменные окружения (например, в `config/.env`):
+```
+APP_PORT=8080
+ADMIN_TOKEN=change-me
+POSTGRES_DSN=postgres://user:pass@localhost:5432/docs_db?sslmode=disable
+REDIS_ADDR=localhost:6379
+REDIS_PASSWORD=
+REDIS_DB=0
+APP_ENV=local
+```
+
+2) Разверните БД:
+```
+psql -d docs_db -f init.sql
+```
+
+3) Запустите приложение:
+```
+go run ./cmd/server
+```
+
+---
+## Тесты
+
+```
+go test ./...
+```
+
+Примечание: один тест `auth` использует Redis (должен быть доступен на `REDIS_ADDR`).
+
+---
+## Архитектура
+
+- `internal/docs` — handlers/service/repository для документов
+- `internal/auth` — auth handlers/service
+- `internal/cache` — Redis кеш (сессии, метаданные, списки, байты)
+- `internal/middleware` — авторизация, request-id
+- `internal/responses` — единый формат ответов
+- `internal/app` — сборка зависимостей, запуск
 
 
 
