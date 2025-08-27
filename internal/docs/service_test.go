@@ -9,8 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type fakeRepo struct{ DocumentRepository }
-
 func TestCacheListForUser(t *testing.T) {
 	ctx := context.Background()
 	fc := newTestFileCache()
