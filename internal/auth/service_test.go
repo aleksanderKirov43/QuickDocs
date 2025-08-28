@@ -27,7 +27,7 @@ func (f *fakeUserRepo) GetLoginByID(ctx context.Context, id int) (string, error)
 	return f.idToLogin[id], nil
 }
 
-type fakeStore struct{ cache.SessionStoreInterface }
+type fakeStore struct{ cache.FileCache }
 
 func TestGenerateValidateLogout(t *testing.T) {
 	store := cache.NewSessionStore("localhost:6379", "", 0)

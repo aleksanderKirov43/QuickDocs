@@ -35,7 +35,6 @@ func Created(w http.ResponseWriter, payload interface{}) {
 }
 
 func Fail(w http.ResponseWriter, status int, code int, msg string) {
-	// Для HEAD не возвращаем тело
 	if w != nil {
 		w.Header().Set("Content-Type", "application/json")
 	}

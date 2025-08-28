@@ -23,18 +23,6 @@ type AuthService interface {
 	CheckPassword(ctx context.Context, login, password string) (string, error)
 }
 
-type Service struct {
-	userRepo users.UserRepository
-	store    *cache.SessionStore
-	tokenTTL time.Duration
-
-}
-
-type User struct {
-	ID    int
-	Login string
-}
-
 func NewService(repo users.UserRepository, store *cache.SessionStore) AuthService {
 	return &Service{
 		userRepo: repo,
@@ -43,9 +31,7 @@ func NewService(repo users.UserRepository, store *cache.SessionStore) AuthServic
 	}
 }
 
-// Создаём нового пользователя
 func (s *Service) RegisterUser(ctx context.Context, login, password string) error {
-	// login: мин. 8, латиница и цифры
 	if len(login) < 8 {
 		return fmt.Errorf("логин должен быть не короче 8 символов")
 	}
@@ -70,7 +56,22 @@ func (s *Service) RegisterUser(ctx context.Context, login, password string) erro
 	return nil
 }
 
-// Проверяем токен и возвращаем login пользователя
+func (s *Service) GenerateToken(login string) (string, error) {
+	token := uuid.NewString()
+
+	userID, _, err := s.userRepo.GetUserByLogin(context.Background(), login)
+	if err != nil {
+		return "", fmt.Errorf("пользователь не найден: %w", err)
+	}
+
+	err = s.store.SaveToken(context.Background(), token, userID, s.tokenTTL)
+	if err != nil {
+		return "", fmt.Errorf("ошибка сохранения токена в Redis: %w", err)
+	}
+
+	return token, nil
+}
+
 func (s *Service) ValidateToken(ctx context.Context, token string) (*User, error) {
 	userID, err := s.store.GetUserID(ctx, token)
 	if err != nil {
@@ -107,33 +108,13 @@ func (s *Service) Login(ctx context.Context, login, password string) (string, er
 	return token, nil
 }
 
-func (s *Service) Logout(ctx context.Context, token string) error {
-	return s.store.DeleteToken(ctx, token)
-}
-
-func (s *Service) GenerateToken(login string) (string, error) {
-	token := uuid.NewString()
-
-	userID, _, err := s.userRepo.GetUserByLogin(context.Background(), login)
-	if err != nil {
-		return "", fmt.Errorf("пользователь не найден: %w", err)
-	}
-
-	err = s.store.SaveToken(context.Background(), token, userID, s.tokenTTL)
-	if err != nil {
-		return "", fmt.Errorf("ошибка сохранения токена в Redis: %w", err)
-	}
-
-	return token, nil
-}
-
 func (s *Service) CheckPassword(ctx context.Context, login, password string) (string, error) {
 	id, hash, err := s.userRepo.GetUserByLogin(ctx, login)
 	if err != nil {
 		return "", errors.New("Не верный логин или пароль")
 	}
 
-	if !passwords.ComparePassword(hash, password){
+	if !passwords.ComparePassword(hash, password) {
 		return "", errors.New("Не верный логин или пароль")
 	}
 
@@ -142,5 +123,9 @@ func (s *Service) CheckPassword(ctx context.Context, login, password string) (st
 		return "", fmt.Errorf("ошибка сохранения токена в Redis: %w", err)
 	}
 
-	return token, nil	
+	return token, nil
+}
+
+func (s *Service) Logout(ctx context.Context, token string) error {
+	return s.store.DeleteToken(ctx, token)
 }

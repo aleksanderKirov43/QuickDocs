@@ -9,10 +9,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-type Handler struct {
-	auth AuthService
-}
-
 func NewHandler(s AuthService) *Handler {
 	return &Handler{auth: s}
 }

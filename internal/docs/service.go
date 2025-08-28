@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/ioutil"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
 	"time"
 
 	"quickdocs/internal/cache"
@@ -31,6 +36,7 @@ func NewService(repo DocumentRepository, cache cache.FileCache) *Service {
 	return &Service{repo: repo, cache: cache}
 }
 
+// CreateDocument создаёт новый документ в БД и инвалидирует кэш списка документов пользователя
 func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
 	if err := s.repo.Create(ctx, doc); err != nil {
 		log.Logger.Printf("req=%s docs.CreateDocument error: id=%s owner=%d err=%v", ctxReqID(ctx), doc.ID, doc.OwnerID, err)
@@ -41,58 +47,130 @@ func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
 	return nil
 }
 
-func (s *Service) GetDocument(ctx context.Context, id uuid.UUID) (*Document, error) {
-	return s.repo.Get(ctx, id)
+// CreateDocumentFromUpload создаёт документ из multipart HTTP запроса с парсингом формы и сохранением файла
+func (s *Service) CreateDocumentFromUpload(ctx context.Context, userID int, r *http.Request, fileFolder string) (*Document, error) {
+	// Парсим multipart form
+	err := r.ParseMultipartForm(32 << 20) // 32 MB max memory
+	if err != nil {
+		return nil, fmt.Errorf("не удалось разобрать multipart form: %w", err)
+	}
+
+	// Парсим метаданные
+	metaJSON := r.FormValue("meta")
+	if metaJSON == "" {
+		return nil, fmt.Errorf("отсутствующее мета-поле")
+	}
+
+	var doc Document
+	if err = json.Unmarshal([]byte(metaJSON), &doc); err != nil {
+		return nil, fmt.Errorf("недопустимый мета-код JSON: %w", err)
+	}
+
+	// Опциональное поле json
+	if jsonStr := r.FormValue("json"); jsonStr != "" {
+		b := json.RawMessage(jsonStr)
+		doc.JsonData = &b
+	}
+
+	// Устанавливаем ID пользователя и генерируем ID документа
+	doc.OwnerID = userID
+	if doc.ID == uuid.Nil {
+		doc.ID = uuid.New()
+	}
+
+	// Обрабатываем файл
+	file, header, err := r.FormFile("file")
+	if err != nil && !errors.Is(err, http.ErrMissingFile) {
+		return nil, fmt.Errorf("не удалось прочитать файл: %w", err)
+	}
+
+	if file != nil {
+		defer file.Close()
+
+		// Сохраняем файл на диск
+		filename := doc.ID.String() + "-" + filepath.Base(header.Filename)
+		savedPath := filepath.Join(fileFolder, filename)
+
+		outFile, err := os.Create(savedPath)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось сохранить файл: %w", err)
+		}
+		defer outFile.Close()
+
+		_, err = io.Copy(outFile, file)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось сохранить файл: %w", err)
+		}
+
+		// Валидация MIME
+		ext := filepath.Ext(header.Filename)
+		guessed := mime.TypeByExtension(ext)
+		contentType := header.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = guessed
+		}
+
+		doc.File = true
+		doc.FilePath = savedPath
+		doc.Name = header.Filename
+		doc.Mime = contentType
+	} else {
+		doc.File = false
+		doc.FilePath = ""
+	}
+
+	// Создаём документ в БД
+	if err := s.CreateDocument(ctx, &doc); err != nil {
+		return nil, fmt.Errorf("не удалось создать документ: %w", err)
+	}
+
+	return &doc, nil
 }
 
-func (s *Service) GetDocumentForUser(ctx context.Context, userID int, id uuid.UUID) (*Document, error) {
-	if meta, err := s.cache.GetFileMetadata(ctx, userID, id.String()); err == nil && meta != "" {
-		var doc Document
-		if json.Unmarshal([]byte(meta), &doc) == nil {
-			log.Logger.Printf("req=%s docs.GetDocumentForUser cache_hit: user=%d id=%s", ctxReqID(ctx), userID, id)
-			return &doc, nil
-		}
-	}
+// DeleteDocumentForUser удаляет документ с проверкой прав доступа и удалением файла с диска
+func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error {
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
-		if err != nil {
-			log.Logger.Printf("req=%s docs.GetDocumentForUser repo_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
-		}
-		return doc, err
+		return fmt.Errorf("документ не найден")
 	}
-	if doc.OwnerID != userID && !doc.Public {
-		return nil, errors.New("доступ запрещен")
-	}
-	if b, err := json.Marshal(doc); err == nil {
-		_ = s.cache.SetFileMetadata(ctx, userID, id.String(), string(b), time.Minute*10)
-	}
-	log.Logger.Printf("req=%s docs.GetDocumentForUser repo_ok: user=%d id=%s", ctxReqID(ctx), userID, id)
-	return doc, nil
-}
 
-func (s *Service) DeleteDocument(ctx context.Context, id uuid.UUID) error {
-	doc, _ := s.repo.Get(ctx, id)
+	if doc.OwnerID != userID {
+		return fmt.Errorf("доступ запрещён")
+	}
+
+	// Удаляем документ из БД
 	if err := s.repo.Delete(ctx, id); err != nil {
-		log.Logger.Printf("req=%s docs.DeleteDocument repo_err: id=%s err=%v", ctxReqID(ctx), id, err)
-		return err
+		return fmt.Errorf("не удалось удалить документ: %w", err)
 	}
-	if doc != nil {
-		_ = s.cache.InvalidateUserFiles(ctx, doc.OwnerID)
-		_ = s.cache.InvalidateFile(ctx, doc.OwnerID, id.String())
+
+	// Удаляем файл с диска, если есть
+	if doc.File && doc.FilePath != "" {
+		if err := os.Remove(doc.FilePath); err != nil {
+			log.Logger.Printf("req=%s docs.DeleteDocumentForUser file_remove_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
+		}
 	}
-	log.Logger.Printf("req=%s docs.DeleteDocument ok: id=%s", ctxReqID(ctx), id)
+
+	// Инвалидируем кэши
+	_ = s.cache.InvalidateUserFiles(ctx, doc.OwnerID)
+	_ = s.cache.InvalidateFile(ctx, doc.OwnerID, id.String())
+
 	return nil
 }
 
-func (s *Service) ListAll(ctx context.Context) ([]Document, error) {
-	return s.repo.ListAll(ctx)
-}
-func (s *Service) ListDocuments(ctx context.Context, limit, offset int) ([]*Document, error) {
-	return s.repo.List(ctx, limit, offset)
-}
+// ListDocuments возвращает список документов с поддержкой фильтров и публичных документов
+func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFilters) ([]*Document, error) {
+	if filters.Login != "" {
+		// Публичные документы другого пользователя
+		return s.repo.ListPublicByLogin(ctx, filters.Login, filters.Key, filters.Value, filters.Limit, filters.Offset, filters.SortBy, filters.Order)
+	}
 
-func (s *Service) ListDocumentsForUser(ctx context.Context, userID int, limit, offset int) ([]*Document, error) {
-	if offset == 0 {
+	if filters.Key != "" || filters.Value != "" || filters.SortBy != "" || filters.Order != "" {
+		// Фильтрованный список
+		return s.repo.ListForUserFiltered(ctx, userID, filters.Key, filters.Value, filters.Limit, filters.Offset, filters.SortBy, filters.Order)
+	}
+
+	// Обычный список пользователя с кэшированием первой страницы
+	if filters.Offset == 0 {
 		if cached, err := s.cache.GetUserFiles(ctx, userID); err == nil && cached != "" {
 			var items []Document
 			if json.Unmarshal([]byte(cached), &items) == nil {
@@ -100,19 +178,21 @@ func (s *Service) ListDocumentsForUser(ctx context.Context, userID int, limit, o
 				for i := range items {
 					res = append(res, &items[i])
 				}
-				log.Logger.Printf("req=%s docs.ListDocumentsForUser cache_hit: user=%d", ctxReqID(ctx), userID)
+				log.Logger.Printf("req=%s docs.ListDocuments cache_hit: user=%d", ctxReqID(ctx), userID)
 				return res, nil
 			}
 		}
 	}
 
-	docs, err := s.repo.ListForUser(ctx, userID, limit, offset)
+	// Получаем из БД
+	docs, err := s.repo.ListForUser(ctx, userID, filters.Limit, filters.Offset)
 	if err != nil {
-		log.Logger.Printf("req=%s docs.ListDocumentsForUser repo_err: user=%d err=%v", ctxReqID(ctx), userID, err)
+		log.Logger.Printf("req=%s docs.ListDocuments repo_err: user=%d err=%v", ctxReqID(ctx), userID, err)
 		return nil, err
 	}
 
-	if offset == 0 {
+	// Кэшируем первую страницу
+	if filters.Offset == 0 {
 		flat := make([]Document, 0, len(docs))
 		for _, d := range docs {
 			if d != nil {
@@ -122,78 +202,45 @@ func (s *Service) ListDocumentsForUser(ctx context.Context, userID int, limit, o
 		if b, err := json.Marshal(flat); err == nil {
 			_ = s.cache.SetUserFiles(ctx, userID, string(b), time.Minute*5)
 		}
-		log.Logger.Printf("req=%s docs.ListDocumentsForUser repo_ok: user=%d count=%d", ctxReqID(ctx), userID, len(docs))
+		log.Logger.Printf("req=%s docs.ListDocuments repo_ok: user=%d count=%d", ctxReqID(ctx), userID, len(docs))
 	}
 
 	return docs, nil
 }
 
-func (s *Service) ListDocumentsFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
-	return s.repo.ListForUserFiltered(ctx, userID, key, value, limit, offset, sortBy, order)
-}
-
-func (s *Service) ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
-	return s.repo.ListPublicByLogin(ctx, login, key, value, limit, offset, sortBy, order)
-}
-
-func (s *Service) GetFileMetadata(ctx context.Context, userID int, docID string) (*Document, error) {
-	meta, err := s.cache.GetFileMetadata(ctx, userID, docID)
-	if err == nil {
-		var doc Document
-		if err := json.Unmarshal([]byte(meta), &doc); err == nil {
-			log.Logger.Printf("req=%s docs.GetFileMetadata cache_hit: user=%d id=%s", ctxReqID(ctx), userID, docID)
-			return &doc, nil
-		}
-	}
-	doc, err := s.repo.GetDocumentByID(ctx, docID)
-	if err != nil {
-		return nil, err
+// GetFileBytes возвращает байты файла с проверкой прав доступа и использованием кэширования
+func (s *Service) GetFileBytes(ctx context.Context, userID int, id uuid.UUID) ([]byte, error) {
+	// Получаем документ с проверкой прав
+	doc, err := s.repo.Get(ctx, id)
+	if err != nil || doc == nil {
+		return nil, fmt.Errorf("документ не найден")
 	}
 
-	if doc.OwnerID != userID {
+	// Проверяем права доступа
+	if doc.OwnerID != userID && !doc.Public {
 		return nil, errors.New("доступ запрещен")
 	}
 
-	data, _ := json.Marshal(doc)
-	_ = s.cache.SetFileMetadata(ctx, userID, docID, string(data), time.Minute*10)
-	log.Logger.Printf("req=%s docs.GetFileMetadata repo_ok: user=%d id=%s", ctxReqID(ctx), userID, docID)
-
-	return doc, nil
-}
-
-func (s *Service) ListFilesByUser(ctx context.Context, userID int) ([]Document, error) {
-	data, err := s.cache.GetUserFiles(ctx, userID)
-	if err == nil {
-		var docs []Document
-		if err := json.Unmarshal([]byte(data), &docs); err == nil {
-			log.Logger.Printf("req=%s docs.ListFilesByUser cache_hit: user=%d", ctxReqID(ctx), userID)
-			return docs, nil
-		}
+	if !doc.File || doc.FilePath == "" {
+		return nil, fmt.Errorf("файл не найден")
 	}
 
-	docs, err := s.repo.ListByUser(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
-	jsonData, _ := json.Marshal(docs)
-	_ = s.cache.SetUserFiles(ctx, userID, string(jsonData), time.Minute*5)
-	log.Logger.Printf("req=%s docs.ListFilesByUser repo_ok: user=%d count=%d", ctxReqID(ctx), userID, len(docs))
-
-	return docs, nil
-}
-
-func (s *Service) GetFileBytesCached(ctx context.Context, userID int, id uuid.UUID, path string, mime string) ([]byte, error) {
+	// Пробуем получить из кэша
 	if data, err := s.cache.GetFileBytes(ctx, userID, id.String()); err == nil && len(data) > 0 {
-		log.Logger.Printf("req=%s docs.GetFileBytesCached cache_hit: user=%d id=%s", ctxReqID(ctx), userID, id)
+		log.Logger.Printf("req=%s docs.GetFileBytes cache_hit: user=%d id=%s", ctxReqID(ctx), userID, id)
 		return data, nil
 	}
-	b, err := ioutil.ReadFile(path)
+
+	// Читаем с диска
+	b, err := os.ReadFile(doc.FilePath)
 	if err != nil {
-		log.Logger.Printf("req=%s docs.GetFileBytesCached read_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
+		log.Logger.Printf("req=%s docs.GetFileBytes read_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
 		return nil, err
 	}
+
+	// Сохраняем в кэш
 	_ = s.cache.SetFileBytes(ctx, userID, id.String(), b, time.Minute*10)
-	log.Logger.Printf("req=%s docs.GetFileBytesCached cache_set: user=%d id=%s size=%d", ctxReqID(ctx), userID, id, len(b))
+	log.Logger.Printf("req=%s docs.GetFileBytes cache_set: user=%d id=%s size=%d", ctxReqID(ctx), userID, id, len(b))
+
 	return b, nil
 }

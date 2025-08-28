@@ -16,11 +16,11 @@ func TestCacheListForUser(t *testing.T) {
 	svc := NewService(repo, fc)
 
 	// первая выборка — попадает в БД и кэширует
-	if _, err := svc.ListDocumentsForUser(ctx, 1, 10, 0); err != nil {
+	if _, err := svc.ListDocuments(ctx, 1, ListFilters{}); err != nil {
 		t.Fatal(err)
 	}
 	// вторая — из кэша
-	if _, err := svc.ListDocumentsForUser(ctx, 1, 10, 0); err != nil {
+	if _, err := svc.ListDocuments(ctx, 1, ListFilters{}); err != nil {
 		t.Fatal(err)
 	}
 }

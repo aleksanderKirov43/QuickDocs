@@ -1,9 +1,26 @@
 package auth
 
 import (
-	"encoding/json"
-	"net/http"
+	"time"
+
+	"quickdocs/internal/cache"
+	"quickdocs/internal/users"
 )
+
+type Handler struct {
+	auth AuthService
+}
+
+type Service struct {
+	userRepo users.UserRepository
+	store    *cache.SessionStore
+	tokenTTL time.Duration
+}
+
+type User struct {
+	ID    int
+	Login string
+}
 
 type ErrorResponse struct {
 	Code int    `json:"code"`
@@ -37,11 +54,4 @@ type RegisterData struct {
 
 type LoginData struct {
 	Token string `json:"token"`
-}
-
-func writeError(w http.ResponseWriter, code int, msg string) {
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(RegisterResponse{
-		Error: &ErrorResponse{Code: code, Text: msg},
-	})
 }
