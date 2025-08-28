@@ -35,7 +35,6 @@ type DocumentService interface {
 	ListFilesByUser(ctx context.Context, userID int) ([]Document, error)
 	ListDocumentsFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)
 	ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)
-	// Кэш для файловых байтов на уровне сервиса
 	GetFileBytesCached(ctx context.Context, userID int, id uuid.UUID, path string, mime string) ([]byte, error)
 }
 

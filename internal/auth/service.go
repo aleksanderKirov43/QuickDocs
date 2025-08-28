@@ -127,14 +127,6 @@ func (s *Service) GenerateToken(login string) (string, error) {
 	return token, nil
 }
 
-//// CheckAdminToken сверяет переданный токен с конфигом
-//func (s *Service) CheckAdminToken(ctx context.Context, token string) error {
-//	if token == "" || token != config.Cfg.AdminToken {
-//		return errors.New("недействительный токен администратора")
-//	}
-//	return nil
-//}
-
 func (s *Service) CheckPassword(ctx context.Context, login, password string) (string, error) {
 	id, hash, err := s.userRepo.GetUserByLogin(ctx, login)
 	if err != nil {

@@ -2,8 +2,9 @@ package passwords
 
 import (
 	"errors"
-	"golang.org/x/crypto/bcrypt"
 	"unicode"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func ValidatePassword(password string) error {

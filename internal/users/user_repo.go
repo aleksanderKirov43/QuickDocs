@@ -46,7 +46,6 @@ func (r *UserRepo) GetUserByLogin(ctx context.Context, login string) (int, strin
 		SELECT id, password FROM users
 		WHERE login = $1
 	`
-
 	var id int
 	var hash string
 
