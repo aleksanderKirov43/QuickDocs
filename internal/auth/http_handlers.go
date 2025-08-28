@@ -2,9 +2,11 @@ package auth
 
 import (
 	"encoding/json"
-	"github.com/go-chi/chi/v5"
 	"net/http"
+
 	"quickdocs/internal/responses"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -15,18 +17,16 @@ func NewHandler(s AuthService) *Handler {
 	return &Handler{auth: s}
 }
 
+func (h *Handler) Service() AuthService {
+	return h.auth
+}
+
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, "Недействительный JSON")
 		return
 	}
-
-	// Проверяем админ-токен согласно ТЗ (на уровне middleware должен быть)
-	//if err := h.auth.CheckAdminToken(r.Context(), req.Token); err != nil {
-	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, err.Error())
-	//	return
-	//}
 
 	err := h.auth.RegisterUser(r.Context(), req.Login, req.Pswd)
 	if err != nil {
@@ -54,22 +54,10 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	//// Получаем ID и хэш пароля из БД (Перенести логику в сервис)
-	//_, hash, err := h.auth.GetUserByLogin(r.Context(), req.Login)
-	//if err != nil {
-	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
-	//	return
-	//}
-	//// Сравниваем пароль
-	//if !passwords.ComparePassword(hash, req.Pswd) {
-	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
-	//	return
-	//}
 
-	// (Перенести в сервис)
-	token, err := h.auth.GenerateToken(req.Login)
+	token, err := h.auth.Login(r.Context(), req.Login, req.Pswd)
 	if err != nil {
-		responses.Fail(w, http.StatusInternalServerError, http.StatusInternalServerError, "Ошибка генерации токена")
+		responses.Fail(w, http.StatusInternalServerError, http.StatusInternalServerError, err.Error())
 		return
 	}
 	responses.Ack(w, &LoginData{Token: token})

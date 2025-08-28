@@ -15,6 +15,7 @@ type ctxKey string
 const (
 	userIDKey ctxKey = "userID"
 	loginKey  ctxKey = "login"
+	tokenKey  ctxKey = "token"
 )
 
 type UserInfo struct {
@@ -23,10 +24,10 @@ type UserInfo struct {
 }
 
 type AuthMiddleware struct {
-	authService *auth.Service
+	authService auth.AuthService
 }
 
-func NewAuthMiddleware(authService *auth.Service) *AuthMiddleware {
+func NewAuthMiddleware(authService auth.AuthService) *AuthMiddleware {
 	return &AuthMiddleware{authService: authService}
 }
 
@@ -63,12 +64,13 @@ func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 		log.Println("Токен сгенерирован:", token)
 		user, err := am.authService.ValidateToken(r.Context(), token)
 		if err != nil {
-			responses.Error200(w, http.StatusUnauthorized, "Полдьзователь не авторизован")
+			responses.Error200(w, http.StatusUnauthorized, "Пользователь не авторизован")
 			return
 		}
 
 		ctx := context.WithValue(r.Context(), userIDKey, user.ID)
 		ctx = context.WithValue(ctx, loginKey, user.Login)
+		ctx = context.WithValue(ctx, tokenKey, token)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -81,4 +83,9 @@ func GetUserID(ctx context.Context) (int, bool) {
 func GetLogin(ctx context.Context) (string, bool) {
 	login, ok := ctx.Value(loginKey).(string)
 	return login, ok
+}
+
+func GetToken(ctx context.Context) (string, bool) {
+	t, ok := ctx.Value(tokenKey).(string)
+	return t, ok
 }

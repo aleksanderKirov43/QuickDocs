@@ -33,7 +33,7 @@ func TestGenerateValidateLogout(t *testing.T) {
 	store := cache.NewSessionStore("localhost:6379", "", 0)
 	repo := &fakeUserRepo{loginToID: map[string]int{"user": 1}, idToLogin: map[int]string{1: "user"}}
 	s := NewService(repo, store)
-	s.tokenTTL = time.Second
+	s.(*Service).tokenTTL = time.Second
 
 	tok, err := s.GenerateToken("user")
 	if err != nil || tok == "" {

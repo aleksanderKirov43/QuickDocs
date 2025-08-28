@@ -17,14 +17,17 @@ import (
 type AuthService interface {
 	RegisterUser(ctx context.Context, login, password string) error
 	ValidateToken(ctx context.Context, token string) (*User, error)
+	Login(ctx context.Context, login, password string) (string, error)
 	Logout(ctx context.Context, token string) error
 	GenerateToken(login string) (string, error)
+	CheckPassword(ctx context.Context, login, password string) (string, error)
 }
 
 type Service struct {
 	userRepo users.UserRepository
 	store    *cache.SessionStore
 	tokenTTL time.Duration
+
 }
 
 type User struct {
@@ -85,6 +88,25 @@ func (s *Service) ValidateToken(ctx context.Context, token string) (*User, error
 	}, nil
 }
 
+func (s *Service) Login(ctx context.Context, login, password string) (string, error) {
+
+	id, hash, err := s.userRepo.GetUserByLogin(ctx, login)
+	if err != nil {
+		return "", errors.New("Не верный логин или пароль")
+	}
+
+	if !passwords.ComparePassword(hash, password) {
+		return "", errors.New("Не верный логин или пароль")
+	}
+
+	token := uuid.NewString()
+	if err := s.store.SaveToken(ctx, token, id, s.tokenTTL); err != nil {
+		return "", fmt.Errorf("ошибка сохранения токена в Redis: %w", err)
+	}
+
+	return token, nil
+}
+
 func (s *Service) Logout(ctx context.Context, token string) error {
 	return s.store.DeleteToken(ctx, token)
 }
@@ -113,6 +135,20 @@ func (s *Service) GenerateToken(login string) (string, error) {
 //	return nil
 //}
 
-//func (s *Service) CheckPassword(ctx context.Context, hash, ) {
-//
-//}
+func (s *Service) CheckPassword(ctx context.Context, login, password string) (string, error) {
+	id, hash, err := s.userRepo.GetUserByLogin(ctx, login)
+	if err != nil {
+		return "", errors.New("Не верный логин или пароль")
+	}
+
+	if !passwords.ComparePassword(hash, password){
+		return "", errors.New("Не верный логин или пароль")
+	}
+
+	token := uuid.NewString()
+	if err := s.store.SaveToken(ctx, token, id, s.tokenTTL); err != nil {
+		return "", fmt.Errorf("ошибка сохранения токена в Redis: %w", err)
+	}
+
+	return token, nil	
+}

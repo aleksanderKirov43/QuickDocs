@@ -17,12 +17,12 @@ func New(authH *auth.Handler, docsH *docs.Handler) http.Handler {
 	r.Use(middleware.Recoverer)
 
 	// публичные
-	r.Post("/api/register", authH.Register)
+	r.With(appmw.AdminToken).Post("/api/register", authH.Register)
 	r.Post("/api/auth", authH.Login)
 
 	// защищённые
 	r.Group(func(pr chi.Router) {
-		pr.Use(appmw.NewAuthMiddleware(authH.Service).Auth)
+		pr.Use(appmw.NewAuthMiddleware(authH.Service()).Auth)
 
 		pr.Delete("/api/auth/{token}", authH.Logout)
 
