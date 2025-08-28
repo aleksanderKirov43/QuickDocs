@@ -7,16 +7,22 @@ import (
 	"regexp"
 	"time"
 
-	"quickdocs/config"
 	"quickdocs/internal/cache"
-	"quickdocs/internal/db"
+	"quickdocs/internal/users"
 	passwords "quickdocs/pkg"
 
 	"github.com/google/uuid"
 )
 
+type AuthService interface {
+	RegisterUser(ctx context.Context, login, password string) error
+	ValidateToken(ctx context.Context, token string) (*User, error)
+	Logout(ctx context.Context, token string) error
+	GenerateToken(login string) (string, error)
+}
+
 type Service struct {
-	userRepo db.UserRepository
+	userRepo users.UserRepository
 	store    *cache.SessionStore
 	tokenTTL time.Duration
 }
@@ -26,14 +32,7 @@ type User struct {
 	Login string
 }
 
-type AuthService interface {
-	RegisterUser(ctx context.Context, login, password string) error
-	ValidateToken(ctx context.Context, token string) (*User, error)
-	Logout(ctx context.Context, token string) error
-	GenerateToken(login string) (string, error)
-}
-
-func NewService(repo db.UserRepository, store *cache.SessionStore) *Service {
+func NewService(repo users.UserRepository, store *cache.SessionStore) AuthService {
 	return &Service{
 		userRepo: repo,
 		store:    store,
@@ -106,10 +105,14 @@ func (s *Service) GenerateToken(login string) (string, error) {
 	return token, nil
 }
 
-// CheckAdminToken сверяет переданный токен с конфигом
-func (s *Service) CheckAdminToken(ctx context.Context, token string) error {
-	if token == "" || token != config.Cfg.AdminToken {
-		return errors.New("недействительный токен администратора")
-	}
-	return nil
-}
+//// CheckAdminToken сверяет переданный токен с конфигом
+//func (s *Service) CheckAdminToken(ctx context.Context, token string) error {
+//	if token == "" || token != config.Cfg.AdminToken {
+//		return errors.New("недействительный токен администратора")
+//	}
+//	return nil
+//}
+
+//func (s *Service) CheckPassword(ctx context.Context, hash, ) {
+//
+//}

@@ -2,19 +2,17 @@ package auth
 
 import (
 	"encoding/json"
+	"github.com/go-chi/chi/v5"
 	"net/http"
 	"quickdocs/internal/responses"
-	passwords "quickdocs/pkg"
-
-	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
-	Service *Service
+	auth AuthService
 }
 
-func NewHandler(s *Service) *Handler {
-	return &Handler{Service: s}
+func NewHandler(s AuthService) *Handler {
+	return &Handler{auth: s}
 }
 
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
@@ -24,13 +22,13 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверяем админ-токен согласно ТЗ
-	if err := h.Service.CheckAdminToken(r.Context(), req.Token); err != nil {
-		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, err.Error())
-		return
-	}
+	// Проверяем админ-токен согласно ТЗ (на уровне middleware должен быть)
+	//if err := h.auth.CheckAdminToken(r.Context(), req.Token); err != nil {
+	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, err.Error())
+	//	return
+	//}
 
-	err := h.Service.RegisterUser(r.Context(), req.Login, req.Pswd)
+	err := h.auth.RegisterUser(r.Context(), req.Login, req.Pswd)
 	if err != nil {
 		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, err.Error())
 		return
@@ -56,19 +54,20 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Получаем ID и хэш пароля из БД
-	_, hash, err := h.Service.userRepo.GetUserByLogin(r.Context(), req.Login)
-	if err != nil {
-		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
-		return
-	}
-	// Сравниваем пароль
-	if !passwords.ComparePassword(hash, req.Pswd) {
-		responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
-		return
-	}
+	//// Получаем ID и хэш пароля из БД (Перенести логику в сервис)
+	//_, hash, err := h.auth.GetUserByLogin(r.Context(), req.Login)
+	//if err != nil {
+	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
+	//	return
+	//}
+	//// Сравниваем пароль
+	//if !passwords.ComparePassword(hash, req.Pswd) {
+	//	responses.Fail(w, http.StatusUnauthorized, http.StatusUnauthorized, "Неверный логин или пароль")
+	//	return
+	//}
 
-	token, err := h.Service.GenerateToken(req.Login)
+	// (Перенести в сервис)
+	token, err := h.auth.GenerateToken(req.Login)
 	if err != nil {
 		responses.Fail(w, http.StatusInternalServerError, http.StatusInternalServerError, "Ошибка генерации токена")
 		return
@@ -83,7 +82,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.Service.Logout(r.Context(), token)
+	err := h.auth.Logout(r.Context(), token)
 	if err != nil {
 		responses.Fail(w, http.StatusBadRequest, http.StatusBadRequest, err.Error())
 		return

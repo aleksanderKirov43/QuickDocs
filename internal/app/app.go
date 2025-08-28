@@ -4,14 +4,12 @@ import (
 	"database/sql"
 	"log"
 	"net/http"
-	"strconv"
-
 	"quickdocs/config"
 	"quickdocs/internal/auth"
 	"quickdocs/internal/cache"
-	"quickdocs/internal/db"
 	"quickdocs/internal/docs"
 	"quickdocs/internal/router"
+	"quickdocs/internal/users"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -27,7 +25,7 @@ func Run() {
 	}
 	cfg := config.Cfg
 
-	// Открытие подключения к PostgreSQL через драйвер pgx
+	// Открытие подключения к PostgreSQL
 	sqlDB, err := sql.Open("pgx", cfg.PostgresDSN)
 	if err != nil {
 		log.Fatalf("Ошибка подключения к базе данных: %v", err)
@@ -38,15 +36,13 @@ func Run() {
 		log.Fatalf("База данных недоступна: %v", err)
 	}
 
-	userRepo := db.NewUserRepo(sqlDB)
-	docRepo := docs.NewRepository(sqlDB)
+	// Сделать подключение через pgx. Отдельно в каждом repo
 
-	dbInt, err := strconv.Atoi(cfg.RedisDB)
-	if err != nil {
-		log.Fatalf("REDIS_DB должно быть числом: %v", err)
-	}
-	redisStore := cache.NewSessionStore(cfg.RedisAddr, cfg.RedisPass, dbInt)
-	fileCache := cache.NewFileCache(cfg.RedisAddr, cfg.RedisPass, dbInt)
+	userRepo := users.NewUserRepo(sqlDB)
+	docRepo := docs.NewDocsRepository(sqlDB)
+
+	redisStore := cache.NewSessionStore(cfg.RedisAddr, cfg.RedisPass, cfg.RedisDB)
+	fileCache := cache.NewFileCache(cfg.RedisAddr, cfg.RedisPass, cfg.RedisDB)
 
 	authService := auth.NewService(userRepo, redisStore)
 	docsService := docs.NewService(docRepo, fileCache)

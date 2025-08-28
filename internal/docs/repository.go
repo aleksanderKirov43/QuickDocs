@@ -28,7 +28,7 @@ type DocumentRepository interface {
 	ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)
 }
 
-func NewRepository(db *sql.DB) *Repository {
+func NewDocsRepository(db *sql.DB) DocumentRepository {
 	return &Repository{db: db}
 }
 

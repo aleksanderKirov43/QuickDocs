@@ -1,4 +1,4 @@
-package db
+package users
 
 import (
 	"context"
@@ -8,11 +8,17 @@ import (
 	"strings"
 )
 
+type UserRepository interface {
+	CreateUser(ctx context.Context, login string, password string) error
+	GetUserByLogin(ctx context.Context, login string) (int, string, error)
+	GetLoginByID(ctx context.Context, id int) (string, error)
+}
+
 type UserRepo struct {
 	db *sql.DB
 }
 
-func NewUserRepo(db *sql.DB) *UserRepo {
+func NewUserRepo(db *sql.DB) UserRepository {
 	return &UserRepo{db: db}
 }
 
