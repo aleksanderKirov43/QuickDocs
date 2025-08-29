@@ -1,6 +1,8 @@
 package main
 
-import "quickdocs/internal/app"
+import (
+	"quickdocs/app"
+)
 
 func main() {
 	app.Run()

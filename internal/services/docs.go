@@ -1,4 +1,4 @@
-package docs
+package services
 
 import (
 	"context"
@@ -8,17 +8,22 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"quickdocs/internal/models"
+	"quickdocs/internal/repository"
 	"time"
 
-	"quickdocs/internal/cache"
 	"quickdocs/internal/log"
 
 	"github.com/google/uuid"
 )
 
+type ctxKey string
+
+const reqIDKey ctxKey = "reqID"
+
 // Для добавления уникального ID на каждый HTTP в контекст
 func ctxReqID(ctx context.Context) string {
-	if v := ctx.Value("reqID"); v != nil {
+	if v := ctx.Value(reqIDKey); v != nil {
 		if s, ok := v.(string); ok {
 			return s
 		}
@@ -26,16 +31,16 @@ func ctxReqID(ctx context.Context) string {
 	return ""
 }
 
-type Service struct {
-	repo  DocumentRepository
-	cache cache.FileCache
+type ServiceDocs struct {
+	repo  repository.DocumentRepository
+	cache repository.FileCache
 }
 
-func NewService(repo DocumentRepository, cache cache.FileCache) *Service {
-	return &Service{repo: repo, cache: cache}
+func NewServiceDocs(repo repository.DocumentRepository, cache repository.FileCache) *ServiceDocs {
+	return &ServiceDocs{repo: repo, cache: cache}
 }
 
-func (s *Service) CreateDocument(ctx context.Context, userID int, file io.Reader, fileName, meta string) (*Document, error) {
+func (s *ServiceDocs) CreateDocument(ctx context.Context, userID int, file io.Reader, fileName, meta string) (*models.Document, error) {
 	// Разбираем meta JSON
 	var jsonData *json.RawMessage
 	public := false
@@ -68,7 +73,7 @@ func (s *Service) CreateDocument(ctx context.Context, userID int, file io.Reader
 		return nil, fmt.Errorf("ошибка записи файла: %w", err)
 	}
 
-	doc := &Document{
+	doc := &models.Document{
 		ID:       fileID,
 		OwnerID:  userID,
 		Name:     fileName,
@@ -88,7 +93,7 @@ func (s *Service) CreateDocument(ctx context.Context, userID int, file io.Reader
 }
 
 // Удалить документ пользователя
-func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error {
+func (s *ServiceDocs) DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error {
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
 		return fmt.Errorf("документ не найден")
@@ -118,7 +123,7 @@ func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid
 }
 
 // Возвращаем список документов с поддержкой фильтров и публичных документов
-func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFilters) ([]*Document, error) {
+func (s *ServiceDocs) ListDocuments(ctx context.Context, userID int, filters models.ListFilters) ([]*models.Document, error) {
 	if filters.Login != "" {
 		// Публичные документы другого пользователя
 		return s.repo.ListPublicByLogin(ctx, filters.Login, filters.Key, filters.Value, filters.Limit, filters.Offset, filters.SortBy, filters.Order)
@@ -132,9 +137,9 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 	// Обычный список пользователя с кэшированием первой страницы
 	if filters.Offset == 0 {
 		if cached, err := s.cache.GetUserFiles(ctx, userID); err == nil && cached != "" {
-			var items []Document
+			var items []models.Document
 			if json.Unmarshal([]byte(cached), &items) == nil {
-				res := make([]*Document, 0, len(items))
+				res := make([]*models.Document, 0, len(items))
 				for i := range items {
 					res = append(res, &items[i])
 				}
@@ -153,7 +158,7 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 
 	// Кэшируем первую страницу
 	if filters.Offset == 0 {
-		flat := make([]Document, 0, len(docs))
+		flat := make([]models.Document, 0, len(docs))
 		for _, d := range docs {
 			if d != nil {
 				flat = append(flat, *d)
@@ -169,7 +174,7 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 }
 
 // Возвращаем файл с проверкой прав доступа и использованием кэширования
-func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*DocumentWithBytes, error) {
+func (s *ServiceDocs) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*models.DocumentWithBytes, error) {
 	// Получаем документ с проверкой прав
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
@@ -187,7 +192,7 @@ func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*D
 	// Пробуем получить из кэша
 	if data, err := s.cache.GetFileBytes(ctx, userID, id.String()); err == nil && len(data) > 0 {
 		log.Logger.Printf("req=%s docs.GetFileBytes cache_hit: user=%d id=%s", ctxReqID(ctx), userID, id)
-		return &DocumentWithBytes{Data: data, Name: doc.Name}, nil
+		return &models.DocumentWithBytes{Data: data, Name: doc.Name}, nil
 	}
 
 	// Читаем с диска
@@ -202,5 +207,5 @@ func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*D
 	_ = s.cache.SetFileBytes(ctx, userID, id.String(), b, time.Minute*10)
 	log.Logger.Printf("req=%s docs.GetFileBytes cache_set: user=%d id=%s size=%d", ctxReqID(ctx), userID, id, len(b))
 
-	return &DocumentWithBytes{Data: b, Name: doc.Name}, nil
+	return &models.DocumentWithBytes{Data: b, Name: doc.Name}, nil
 }

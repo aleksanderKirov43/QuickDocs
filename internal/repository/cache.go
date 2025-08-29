@@ -1,4 +1,4 @@
-package cache
+package repository
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 )
+
+// Сделать одну реализацию Redis
 
 type FileCache interface {
 	SetFileMetadata(ctx context.Context, userID int, docID string, meta string, ttl time.Duration) error
@@ -29,7 +31,7 @@ type RedisFileCache struct {
 	*RedisClient
 }
 
-// SessionStore для токенов
+// SessionStore для токенов (их писать с маленькой буквы лучше)
 type SessionStore struct {
 	*RedisClient
 }
@@ -47,6 +49,9 @@ func NewRedisClient(addr, password string, db int) *RedisClient {
 func NewSessionStore(addr, password string, db int) *SessionStore {
 	return &SessionStore{NewRedisClient(addr, password, db)}
 }
+func NewFileCache(addr, password string, db int) FileCache {
+	return &RedisFileCache{NewRedisClient(addr, password, db)}
+}
 
 func (s *SessionStore) SaveToken(ctx context.Context, token string, userID int, ttl time.Duration) error {
 	return s.client.Set(ctx, fmt.Sprintf("auth:token:%s", token), userID, ttl).Err()
@@ -62,10 +67,6 @@ func (s *SessionStore) GetUserID(ctx context.Context, token string) (int, error)
 
 func (s *SessionStore) DeleteToken(ctx context.Context, token string) error {
 	return s.client.Del(ctx, fmt.Sprintf("auth:token:%s", token)).Err()
-}
-
-func NewFileCache(addr, password string, db int) FileCache {
-	return &RedisFileCache{NewRedisClient(addr, password, db)}
 }
 
 func (c *RedisFileCache) SetFileMetadata(ctx context.Context, userID int, docID string, meta string, ttl time.Duration) error {

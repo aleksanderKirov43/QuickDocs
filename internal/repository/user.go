@@ -1,10 +1,11 @@
-package users
+package repository
 
 import (
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"strings"
 )
 
@@ -15,10 +16,10 @@ type UserRepository interface {
 }
 
 type UserRepo struct {
-	db *sql.DB
+	db *pgxpool.Pool
 }
 
-func NewUserRepo(db *sql.DB) UserRepository {
+func NewUserRepo(db *pgxpool.Pool) UserRepository {
 	return &UserRepo{db: db}
 }
 
@@ -28,7 +29,7 @@ func (r *UserRepo) CreateUser(ctx context.Context, login, password string) error
 		VALUES ($1, $2)
 	`
 
-	_, err := r.db.ExecContext(ctx, query, login, password)
+	_, err := r.db.Exec(ctx, query, login, password)
 
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -49,7 +50,7 @@ func (r *UserRepo) GetUserByLogin(ctx context.Context, login string) (int, strin
 	var id int
 	var hash string
 
-	err := r.db.QueryRowContext(ctx, query, login).Scan(&id, &hash)
+	err := r.db.QueryRow(ctx, query, login).Scan(&id, &hash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, "", fmt.Errorf("Пользователь не найден")
@@ -63,7 +64,7 @@ func (r *UserRepo) GetUserByLogin(ctx context.Context, login string) (int, strin
 func (r *UserRepo) GetLoginByID(ctx context.Context, id int) (string, error) {
 	var login string
 	query := `SELECT login FROM users WHERE id = $1`
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&login)
+	err := r.db.QueryRow(ctx, query, id).Scan(&login)
 	if err != nil {
 		return "", err
 	}

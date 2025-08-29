@@ -1,13 +1,14 @@
-package middleware
+package app
 
 import (
 	"context"
 	"log"
 	"net/http"
+	"quickdocs/pkg"
 	"strings"
 
-	"quickdocs/internal/auth"
-	"quickdocs/internal/responses"
+	http2 "quickdocs/internal/api/http"
+	"quickdocs/internal/services"
 )
 
 type ctxKey string
@@ -24,10 +25,10 @@ type UserInfo struct {
 }
 
 type AuthMiddleware struct {
-	authService auth.AuthService
+	authService services.AuthService
 }
 
-func NewAuthMiddleware(authService auth.AuthService) *AuthMiddleware {
+func NewAuthMiddleware(authService services.AuthService) *AuthMiddleware {
 	return &AuthMiddleware{authService: authService}
 }
 
@@ -36,7 +37,7 @@ func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 		// request id
 		reqID := r.Header.Get("X-Request-ID")
 		if reqID == "" {
-			reqID = generateRequestID()
+			reqID = pkg.GenerateRequestID()
 		}
 		r = r.WithContext(context.WithValue(r.Context(), ctxKey("reqID"), reqID))
 		authHeader := r.Header.Get("Authorization")
@@ -49,13 +50,13 @@ func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 
 		if token == "" {
 			if authHeader == "" {
-				responses.Error200(w, http.StatusUnauthorized, "Неавторизованный: отсутствует токен")
+				http2.Error200(w, http.StatusUnauthorized, "Неавторизованный: отсутствует токен")
 				return
 			}
 
 			const bearerPrefix = "Bearer "
 			if !strings.HasPrefix(authHeader, bearerPrefix) {
-				responses.Error200(w, http.StatusUnauthorized, "Недопустимый формат токена")
+				http2.Error200(w, http.StatusUnauthorized, "Недопустимый формат токена")
 				return
 			}
 			token = strings.TrimPrefix(authHeader, bearerPrefix)
@@ -64,7 +65,7 @@ func (am *AuthMiddleware) Auth(next http.Handler) http.Handler {
 		log.Println("Токен сгенерирован:", token)
 		user, err := am.authService.ValidateToken(r.Context(), token)
 		if err != nil {
-			responses.Error200(w, http.StatusUnauthorized, "Пользователь не авторизован")
+			http2.Error200(w, http.StatusUnauthorized, "Пользователь не авторизован")
 			return
 		}
 

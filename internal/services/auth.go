@@ -1,29 +1,34 @@
-package auth
+package services
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	passwords "quickdocs/internal/api/http"
+	"quickdocs/internal/models"
+	"quickdocs/internal/repository"
 	"regexp"
 	"time"
-
-	"quickdocs/internal/cache"
-	"quickdocs/internal/users"
-	passwords "quickdocs/pkg"
 
 	"github.com/google/uuid"
 )
 
 type AuthService interface {
 	RegisterUser(ctx context.Context, login, password string) error
-	ValidateToken(ctx context.Context, token string) (*User, error)
+	ValidateToken(ctx context.Context, token string) (*models.User, error)
 	Login(ctx context.Context, login, password string) (string, error)
 	Logout(ctx context.Context, token string) error
 	GenerateToken(login string) (string, error)
 	CheckPassword(ctx context.Context, login, password string) (string, error)
 }
 
-func NewService(repo users.UserRepository, store *cache.SessionStore) AuthService {
+type Service struct {
+	userRepo repository.UserRepository
+	store    *repository.SessionStore
+	tokenTTL time.Duration
+}
+
+func NewServiceAuth(repo repository.UserRepository, store *repository.SessionStore) AuthService {
 	return &Service{
 		userRepo: repo,
 		store:    store,
@@ -72,7 +77,7 @@ func (s *Service) GenerateToken(login string) (string, error) {
 	return token, nil
 }
 
-func (s *Service) ValidateToken(ctx context.Context, token string) (*User, error) {
+func (s *Service) ValidateToken(ctx context.Context, token string) (*models.User, error) {
 	userID, err := s.store.GetUserID(ctx, token)
 	if err != nil {
 		return nil, errors.New("недействительный или просроченный токен")
@@ -83,7 +88,7 @@ func (s *Service) ValidateToken(ctx context.Context, token string) (*User, error
 		return nil, err
 	}
 
-	return &User{
+	return &models.User{
 		ID:    userID,
 		Login: login,
 	}, nil

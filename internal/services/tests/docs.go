@@ -1,8 +1,10 @@
-package docs
+package tests
 
 import (
 	"context"
 	"encoding/json"
+	"quickdocs/internal/models"
+	"quickdocs/internal/services"
 	"testing"
 	"time"
 
@@ -12,39 +14,41 @@ import (
 func TestCacheListForUser(t *testing.T) {
 	ctx := context.Background()
 	fc := newTestFileCache()
-	repo := &stubRepo{list: []*Document{{OwnerID: 1, Name: "a"}}}
-	svc := NewService(repo, fc)
+	repo := &stubRepo{list: []*models.Document{{OwnerID: 1, Name: "a"}}}
+	svc := services.NewService(repo, fc)
 
 	// первая выборка — попадает в БД и кэширует
-	if _, err := svc.ListDocuments(ctx, 1, ListFilters{}); err != nil {
+	if _, err := svc.ListDocuments(ctx, 1, models.ListFilters{}); err != nil {
 		t.Fatal(err)
 	}
 	// вторая — из кэша
-	if _, err := svc.ListDocuments(ctx, 1, ListFilters{}); err != nil {
+	if _, err := svc.ListDocuments(ctx, 1, models.ListFilters{}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-type stubRepo struct{ list []*Document }
+type stubRepo struct{ list []*models.Document }
 
-func (s *stubRepo) Create(ctx context.Context, doc *Document) error          { return nil }
-func (s *stubRepo) Get(ctx context.Context, id uuid.UUID) (*Document, error) { return nil, nil }
-func (s *stubRepo) Delete(ctx context.Context, id uuid.UUID) error           { return nil }
-func (s *stubRepo) List(ctx context.Context, limit, offset int) ([]*Document, error) {
+func (s *stubRepo) Create(ctx context.Context, doc *models.Document) error          { return nil }
+func (s *stubRepo) Get(ctx context.Context, id uuid.UUID) (*models.Document, error) { return nil, nil }
+func (s *stubRepo) Delete(ctx context.Context, id uuid.UUID) error                  { return nil }
+func (s *stubRepo) List(ctx context.Context, limit, offset int) ([]*models.Document, error) {
 	return s.list, nil
 }
-func (s *stubRepo) ListForUser(ctx context.Context, userID, limit, offset int) ([]*Document, error) {
+func (s *stubRepo) ListForUser(ctx context.Context, userID, limit, offset int) ([]*models.Document, error) {
 	return s.list, nil
 }
-func (s *stubRepo) ListAll(ctx context.Context) ([]Document, error)                { return nil, nil }
-func (s *stubRepo) ListByUser(ctx context.Context, userID int) ([]Document, error) { return nil, nil }
-func (s *stubRepo) GetDocumentByID(ctx context.Context, docID string) (*Document, error) {
+func (s *stubRepo) ListAll(ctx context.Context) ([]models.Document, error) { return nil, nil }
+func (s *stubRepo) ListByUser(ctx context.Context, userID int) ([]models.Document, error) {
 	return nil, nil
 }
-func (s *stubRepo) ListForUserFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
+func (s *stubRepo) GetDocumentByID(ctx context.Context, docID string) (*models.Document, error) {
+	return nil, nil
+}
+func (s *stubRepo) ListForUserFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*models.Document, error) {
 	return s.list, nil
 }
-func (s *stubRepo) ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*Document, error) {
+func (s *stubRepo) ListPublicByLogin(ctx context.Context, login string, key, value string, limit, offset int, sortBy, order string) ([]*models.Document, error) {
 	return s.list, nil
 }
 

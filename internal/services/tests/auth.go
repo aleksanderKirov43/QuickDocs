@@ -1,4 +1,4 @@
-package auth
+package tests
 
 import (
 	"context"
@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"quickdocs/internal/cache"
+	"quickdocs/internal/repository"
+	"quickdocs/internal/services"
 )
 
 type fakeUserRepo struct {
@@ -27,12 +28,12 @@ func (f *fakeUserRepo) GetLoginByID(ctx context.Context, id int) (string, error)
 	return f.idToLogin[id], nil
 }
 
-type fakeStore struct{ cache.FileCache }
+type fakeStore struct{ repository.FileCache }
 
 func TestGenerateValidateLogout(t *testing.T) {
-	store := cache.NewSessionStore("localhost:6379", "", 0)
+	store := repository.NewSessionStore("localhost:6379", "", 0)
 	repo := &fakeUserRepo{loginToID: map[string]int{"user": 1}, idToLogin: map[int]string{1: "user"}}
-	s := NewService(repo, store)
+	s := services.NewServiceAuth(repo, store)
 	s.(*Service).tokenTTL = time.Second
 
 	tok, err := s.GenerateToken("user")

@@ -1,21 +1,4 @@
-package auth
-
-import (
-	"time"
-
-	"quickdocs/internal/cache"
-	"quickdocs/internal/users"
-)
-
-type Handler struct {
-	auth AuthService
-}
-
-type Service struct {
-	userRepo users.UserRepository
-	store    *cache.SessionStore
-	tokenTTL time.Duration
-}
+package models
 
 type User struct {
 	ID    int
