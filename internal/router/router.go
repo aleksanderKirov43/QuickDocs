@@ -29,9 +29,9 @@ func New(authH *auth.Handler, docsH *docs.Handler) http.Handler {
 		pr.Route("/api/docs", func(dr chi.Router) {
 			dr.Get("/", docsH.List) // список (свой/по фильтрам)
 			dr.Head("/", docsH.HeadSessionCheck)
-			dr.Post("/", docsH.Upload)   // загрузка
-			dr.Get("/{id}", docsH.Get)   // получение документа
-			dr.Head("/{id}", docsH.Head) // HEAD документа
+			dr.Post("/", docsH.Upload)               // загрузка
+			dr.Get("/{id}", docsH.Get)               // получение документа
+			dr.Head("/{id}", docsH.HeadSessionCheck) // HEAD документа
 			dr.Delete("/{id}", docsH.Delete)
 		})
 	})
