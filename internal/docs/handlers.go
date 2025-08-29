@@ -2,27 +2,25 @@ package docs
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
-
-	"quickdocs/internal/middleware"
-	"quickdocs/internal/responses"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+
+	"quickdocs/internal/middleware"
+	"quickdocs/internal/responses"
 )
 
 type DocumentService interface {
-	// Создание документа из multipart запроса
-	CreateDocumentFromUpload(ctx context.Context, userID int, r *http.Request, fileFolder string) (*Document, error)
-
-	// Получение списка документов с фильтрами
+	CreateDocument(ctx context.Context, doc *Document) error
 	ListDocuments(ctx context.Context, userID int, filters ListFilters) ([]*Document, error)
-
-	// Получение файла с проверкой прав
-	GetFileBytes(ctx context.Context, userID int, id uuid.UUID) ([]byte, error)
-
-	// Удаление документа с проверкой прав
+	GetDocument(ctx context.Context, userID int, id uuid.UUID) (*DocumentWithBytes, error)
 	DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error
 }
 
@@ -36,25 +34,86 @@ func NewHandler(service DocumentService, fileFolder string) *Handler {
 }
 
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	userID, ok := middleware.GetUserID(r.Context())
+	ctx := r.Context()
+	userID, ok := middleware.GetUserID(ctx)
 	if !ok {
 		responses.Error200(w, http.StatusUnauthorized, "Неавторизованный пользователь")
 		return
 	}
 
-	doc, err := h.service.CreateDocumentFromUpload(r.Context(), userID, r, h.fileFolder)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		responses.Error200(w, http.StatusBadRequest, "Неверные данные формы")
+		return
+	}
+
+	file, header, err := r.FormFile("file")
 	if err != nil {
-		responses.Error200(w, http.StatusBadRequest, err.Error())
+		responses.Error200(w, http.StatusBadRequest, "Файл не предоставлен")
+		return
+	}
+	defer file.Close()
+
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		responses.Error200(w, http.StatusInternalServerError, "Невозможно создать директорию")
+		return
+	}
+
+	fileID := uuid.New()
+	filePath := filepath.Join(uploadDir, fileID.String()+"_"+header.Filename)
+
+	dst, err := os.Create(filePath)
+	if err != nil {
+		responses.Error200(w, http.StatusInternalServerError, "Невозможно сохранить файл")
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		responses.Error200(w, http.StatusInternalServerError, "Ошибка записи файла")
+		return
+	}
+
+	// Парсим meta JSON
+	var jsonData *json.RawMessage
+	public := false
+	if meta := r.FormValue("meta"); meta != "" {
+		var metaMap map[string]interface{}
+		if err := json.Unmarshal([]byte(meta), &metaMap); err != nil {
+			responses.Error200(w, http.StatusBadRequest, "Неверный формат meta JSON")
+			return
+		}
+		jm := json.RawMessage(meta)
+		jsonData = &jm
+
+		if pub, ok := metaMap["public"].(bool); ok {
+			public = pub
+		}
+	}
+
+	doc := &Document{
+		ID:       fileID,
+		OwnerID:  userID,
+		Name:     header.Filename,
+		File:     true,
+		Public:   public,
+		JsonData: jsonData,
+	}
+
+	if err := h.service.CreateDocument(ctx, doc); err != nil {
+		responses.Error200(w, http.StatusInternalServerError, "Не удалось создать документ: "+err.Error())
 		return
 	}
 
 	responses.Created(w, map[string]interface{}{
-		"json": doc.JsonData,
-		"file": doc.Name,
+		"data": map[string]interface{}{
+			"file": doc.Name,
+			"json": doc.JsonData,
+		},
 	})
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -62,23 +121,21 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := middleware.GetUserID(r.Context())
+	userID, ok := middleware.GetUserID(ctx)
 	if !ok {
 		responses.Error200(w, http.StatusUnauthorized, "Неавторизованный")
 		return
 	}
 
-	// Получаем файл через сервис (он сам проверит права и вернёт файл или ошибку)
-	data, err := h.service.GetFileBytes(r.Context(), userID, id)
+	docWithBytes, err := h.service.GetDocument(ctx, userID, id)
 	if err != nil {
-		responses.Error200(w, http.StatusBadRequest, err.Error())
+		responses.Error200(w, http.StatusNotFound, err.Error())
 		return
 	}
 
-	// Если это файл, отдаём его
-	w.Header().Set("Content-Disposition", "attachment; filename="+idStr)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", docWithBytes.Name))
 	w.Header().Set("Content-Type", "application/octet-stream")
-	_, _ = w.Write(data)
+	_, _ = w.Write(docWithBytes.Data)
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {

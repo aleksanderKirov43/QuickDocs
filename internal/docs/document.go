@@ -16,7 +16,6 @@ type Document struct {
 	Public   bool             `json:"public"`
 	Created  time.Time        `json:"created_at"`
 	JsonData *json.RawMessage `json:"json,omitempty"`
-	FilePath string           `json:"-"`
 	Size     int64            `json:"size"`
 }
 
@@ -34,4 +33,9 @@ type UploadRequest struct {
 	JsonData *json.RawMessage `json:"json,omitempty"`
 	File     []byte           `json:"file,omitempty"`
 	FileName string           `json:"file_name,omitempty"`
+}
+
+type DocumentWithBytes struct {
+	Data []byte
+	Name string
 }

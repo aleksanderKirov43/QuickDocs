@@ -18,10 +18,10 @@ type Repository struct {
 type DocumentRepository interface {
 	Create(ctx context.Context, doc *Document) error
 	Get(ctx context.Context, id uuid.UUID) (*Document, error)
-	Delete(ctx context.Context, id uuid.UUID) error
+	ListAll(ctx context.Context) ([]Document, error)
 	List(ctx context.Context, limit, offset int) ([]*Document, error)
 	ListForUser(ctx context.Context, userID, limit, offset int) ([]*Document, error)
-	ListAll(ctx context.Context) ([]Document, error)
+	Delete(ctx context.Context, id uuid.UUID) error
 	ListByUser(ctx context.Context, userID int) ([]Document, error)
 	GetDocumentByID(ctx context.Context, docID string) (*Document, error)
 	ListForUserFiltered(ctx context.Context, userID int, key, value string, limit, offset int, sortBy, order string) ([]*Document, error)

@@ -60,9 +60,11 @@ func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid
 	}
 
 	// Удаляем файл с диска, если есть
-	if doc.File && doc.FilePath != "" {
-		if err := os.Remove(doc.FilePath); err != nil {
-			log.Logger.Printf("req=%s docs.DeleteDocumentForUser file_remove_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
+	if doc.File {
+		filePath := fmt.Sprintf("./uploads/%s_%s", doc.ID.String(), doc.Name)
+		if err := os.Remove(filePath); err != nil {
+			log.Logger.Printf("req=%s docs.DeleteDocumentForUser file_remove_err: user=%d id=%s err=%v",
+				ctxReqID(ctx), userID, doc.ID, err)
 		}
 	}
 
@@ -124,30 +126,31 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 }
 
 // Возвращаем файл с проверкой прав доступа и использованием кэширования
-func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) ([]byte, error) {
+
+func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*DocumentWithBytes, error) {
 	// Получаем документ с проверкой прав
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
 		return nil, fmt.Errorf("документ не найден")
 	}
 
-	// Проверяем права доступа
 	if doc.OwnerID != userID && !doc.Public {
 		return nil, errors.New("доступ запрещен")
 	}
 
-	if !doc.File || doc.FilePath == "" {
+	if !doc.File {
 		return nil, fmt.Errorf("файл не найден")
 	}
 
 	// Пробуем получить из кэша
 	if data, err := s.cache.GetFileBytes(ctx, userID, id.String()); err == nil && len(data) > 0 {
 		log.Logger.Printf("req=%s docs.GetFileBytes cache_hit: user=%d id=%s", ctxReqID(ctx), userID, id)
-		return data, nil
+		return &DocumentWithBytes{Data: data, Name: doc.Name}, nil
 	}
 
 	// Читаем с диска
-	b, err := os.ReadFile(doc.FilePath)
+	filePath := fmt.Sprintf("./uploads/%s_%s", doc.ID.String(), doc.Name)
+	b, err := os.ReadFile(filePath)
 	if err != nil {
 		log.Logger.Printf("req=%s docs.GetFileBytes read_err: user=%d id=%s err=%v", ctxReqID(ctx), userID, id, err)
 		return nil, err
@@ -157,5 +160,5 @@ func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) ([]
 	_ = s.cache.SetFileBytes(ctx, userID, id.String(), b, time.Minute*10)
 	log.Logger.Printf("req=%s docs.GetFileBytes cache_set: user=%d id=%s size=%d", ctxReqID(ctx), userID, id, len(b))
 
-	return b, nil
+	return &DocumentWithBytes{Data: b, Name: doc.Name}, nil
 }

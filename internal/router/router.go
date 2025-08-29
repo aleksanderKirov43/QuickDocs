@@ -30,7 +30,7 @@ func New(authH *auth.Handler, docsH *docs.Handler) http.Handler {
 			dr.Get("/", docsH.List) // список (свой/по фильтрам)
 			dr.Head("/", docsH.HeadSessionCheck)
 			dr.Post("/", docsH.Upload)   // загрузка
-			dr.Get("/{id}", docsH.Get)   // получение
+			dr.Get("/{id}", docsH.Get)   // получение документа
 			dr.Head("/{id}", docsH.Head) // HEAD документа
 			dr.Delete("/{id}", docsH.Delete)
 		})

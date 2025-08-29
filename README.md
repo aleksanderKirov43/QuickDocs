@@ -45,11 +45,10 @@ REST API для загрузки, хранения и раздачи элект�
 
 ### 1) Регистрация
 ```
-POST /api/register
+POST /api/register?admin_token=<ADMIN_TOKEN (из env)>
 Content-Type: application/json
 
 {
-  "token": "<ADMIN_TOKEN>",
   "login": "userlogin",
   "pswd":  "Aa1!aaaa"
 }
@@ -95,10 +94,9 @@ Authorization: Bearer <token>
 -> 200 { "data": { "docs": [ ... ] } }
 ```
 
-- Параметры: `limit`, `offset`, `key` (name|mime|has_file|is_public), `value`, `sort` (name|created), `order` (asc|desc)
-- Публичные документы другого пользователя: `GET /api/docs?login=other`
-
-HEAD /api/docs — 200 без тела (кэш прогревается).
+- Параметры: `limit`, `offset`, `key` (name|mime|has_file|is_public), `value`, `sort` (name|created), `order` (asc|desc) не обязательны.
+По умолчанию мы получаем первые 10 страниц без фильтров и сортировки.
+- Публичные документы пользователя: `GET /api/docs?login=other`
 
 ### 5) Один документ
 ```
@@ -168,14 +166,6 @@ go test ./...
 Примечание: один тест `auth` использует Redis (должен быть доступен на `REDIS_ADDR`).
 
 ---
-## Архитектура
-
-- `internal/docs` — handlers/service/repository для документов
-- `internal/auth` — auth handlers/service
-- `internal/cache` — Redis кеш (сессии, метаданные, списки, байты)
-- `internal/middleware` — авторизация, request-id
-- `internal/responses` — единый формат ответов
-- `internal/app` — сборка зависимостей, запуск
 
 
 
