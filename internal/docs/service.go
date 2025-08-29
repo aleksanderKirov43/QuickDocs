@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"quickdocs/internal/cache"
@@ -33,15 +35,56 @@ func NewService(repo DocumentRepository, cache cache.FileCache) *Service {
 	return &Service{repo: repo, cache: cache}
 }
 
-// Создаём новый документ в БД и инвалидирует кэш списка документов пользователя
-func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
-	if err := s.repo.Create(ctx, doc); err != nil {
-		log.Logger.Printf("req=%s docs.CreateDocument error: id=%s owner=%d err=%v", ctxReqID(ctx), doc.ID, doc.OwnerID, err)
-		return err
+func (s *Service) CreateDocument(ctx context.Context, userID int, file io.Reader, fileName, meta string) (*Document, error) {
+	// Разбираем meta JSON
+	var jsonData *json.RawMessage
+	public := false
+	if meta != "" {
+		var metaMap map[string]interface{}
+		if err := json.Unmarshal([]byte(meta), &metaMap); err != nil {
+			return nil, fmt.Errorf("неверный формат meta JSON: %w", err)
+		}
+		jm := json.RawMessage(meta)
+		jsonData = &jm
+
+		if pub, ok := metaMap["public"].(bool); ok {
+			public = pub
+		}
 	}
-	_ = s.cache.InvalidateUserFiles(ctx, doc.OwnerID)
-	log.Logger.Printf("req=%s docs.CreateDocument ok: id=%s owner=%d", ctxReqID(ctx), doc.ID, doc.OwnerID)
-	return nil
+
+	fileID := uuid.New()
+	uploadDir := "./uploads"
+	if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		return nil, fmt.Errorf("невозможно создать директорию: %w", err)
+	}
+	filePath := filepath.Join(uploadDir, fileID.String()+"_"+fileName)
+
+	dst, err := os.Create(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("невозможно сохранить файл: %w", err)
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		return nil, fmt.Errorf("ошибка записи файла: %w", err)
+	}
+
+	doc := &Document{
+		ID:       fileID,
+		OwnerID:  userID,
+		Name:     fileName,
+		File:     true,
+		Public:   public,
+		JsonData: jsonData,
+	}
+
+	if err := s.repo.Create(ctx, doc); err != nil {
+		return nil, fmt.Errorf("не удалось создать запись документа: %w", err)
+	}
+
+	_ = s.cache.InvalidateUserFiles(ctx, userID)
+	log.Logger.Printf("req=%s docs.CreateDocument ok: id=%s owner=%d", ctxReqID(ctx), doc.ID, userID)
+
+	return doc, nil
 }
 
 // Удалить документ пользователя
@@ -126,7 +169,6 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 }
 
 // Возвращаем файл с проверкой прав доступа и использованием кэширования
-
 func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) (*DocumentWithBytes, error) {
 	// Получаем документ с проверкой прав
 	doc, err := s.repo.Get(ctx, id)

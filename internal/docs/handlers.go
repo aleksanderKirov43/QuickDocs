@@ -2,23 +2,19 @@ package docs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"os"
-	"path/filepath"
-	"strconv"
-
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"io"
+	"net/http"
+	"strconv"
 
 	"quickdocs/internal/middleware"
 	"quickdocs/internal/responses"
 )
 
 type DocumentService interface {
-	CreateDocument(ctx context.Context, doc *Document) error
+	CreateDocument(ctx context.Context, userID int, file io.Reader, fileName, meta string) (*Document, error)
 	ListDocuments(ctx context.Context, userID int, filters ListFilters) ([]*Document, error)
 	GetDocument(ctx context.Context, userID int, id uuid.UUID) (*DocumentWithBytes, error)
 	DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error
@@ -41,11 +37,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		responses.Error200(w, http.StatusBadRequest, "Неверные данные формы")
-		return
-	}
-
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		responses.Error200(w, http.StatusBadRequest, "Файл не предоставлен")
@@ -53,53 +44,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	uploadDir := "./uploads"
-	if err := os.MkdirAll(uploadDir, 0755); err != nil {
-		responses.Error200(w, http.StatusInternalServerError, "Невозможно создать директорию")
-		return
-	}
+	meta := r.FormValue("meta")
 
-	fileID := uuid.New()
-	filePath := filepath.Join(uploadDir, fileID.String()+"_"+header.Filename)
-
-	dst, err := os.Create(filePath)
+	doc, err := h.service.CreateDocument(ctx, userID, file, header.Filename, meta)
 	if err != nil {
-		responses.Error200(w, http.StatusInternalServerError, "Невозможно сохранить файл")
-		return
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, file); err != nil {
-		responses.Error200(w, http.StatusInternalServerError, "Ошибка записи файла")
-		return
-	}
-
-	// Парсим meta JSON
-	var jsonData *json.RawMessage
-	public := false
-	if meta := r.FormValue("meta"); meta != "" {
-		var metaMap map[string]interface{}
-		if err := json.Unmarshal([]byte(meta), &metaMap); err != nil {
-			responses.Error200(w, http.StatusBadRequest, "Неверный формат meta JSON")
-			return
-		}
-		jm := json.RawMessage(meta)
-		jsonData = &jm
-
-		if pub, ok := metaMap["public"].(bool); ok {
-			public = pub
-		}
-	}
-
-	doc := &Document{
-		ID:       fileID,
-		OwnerID:  userID,
-		Name:     header.Filename,
-		File:     true,
-		Public:   public,
-		JsonData: jsonData,
-	}
-
-	if err := h.service.CreateDocument(ctx, doc); err != nil {
 		responses.Error200(w, http.StatusInternalServerError, "Не удалось создать документ: "+err.Error())
 		return
 	}
@@ -112,6 +60,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Get только вызывает сервис и отдаёт байты
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	idStr := chi.URLParam(r, "id")
@@ -138,6 +87,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(docWithBytes.Data)
 }
 
+// Delete вызывает сервис
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
@@ -160,6 +110,7 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	responses.Ack(w, map[string]bool{idStr: true})
 }
 
+// List только собирает фильтры и отдаёт сервису
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
@@ -198,24 +149,13 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	responses.OK(w, map[string]interface{}{"docs": docs})
 }
 
-func (h *Handler) Head(w http.ResponseWriter, r *http.Request) {
-	_, ok := middleware.GetUserID(r.Context())
-	if !ok {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	// HEAD запрос - просто проверяем авторизацию
-	w.WriteHeader(http.StatusOK)
-}
-
+// Прогрев кэша, только вызывает сервис
 func (h *Handler) HeadSessionCheck(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.GetUserID(r.Context())
 	if !ok {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	// Прогреваем кэш списка пользователя
 	_, _ = h.service.ListDocuments(r.Context(), userID, ListFilters{Limit: 10, Offset: 0})
 	w.WriteHeader(http.StatusOK)
 }
