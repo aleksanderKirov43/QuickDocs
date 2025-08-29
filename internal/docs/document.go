@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Основная структура документа
 type Document struct {
 	ID       uuid.UUID        `json:"id"`
 	OwnerID  int              `json:"owner_id"`

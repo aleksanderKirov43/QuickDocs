@@ -47,87 +47,8 @@ func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
 	return nil
 }
 
-// CreateDocumentFromUpload создаёт документ из multipart HTTP запроса с парсингом формы и сохранением файла
-func (s *Service) CreateDocumentFromUpload(ctx context.Context, userID int, r *http.Request, fileFolder string) (*Document, error) {
-	// Парсим multipart form
-	err := r.ParseMultipartForm(32 << 20) // 32 MB max memory
-	if err != nil {
-		return nil, fmt.Errorf("не удалось разобрать multipart form: %w", err)
-	}
 
-	// Парсим метаданные
-	metaJSON := r.FormValue("meta")
-	if metaJSON == "" {
-		return nil, fmt.Errorf("отсутствующее мета-поле")
-	}
-
-	var doc Document
-	if err = json.Unmarshal([]byte(metaJSON), &doc); err != nil {
-		return nil, fmt.Errorf("недопустимый мета-код JSON: %w", err)
-	}
-
-	// Опциональное поле json
-	if jsonStr := r.FormValue("json"); jsonStr != "" {
-		b := json.RawMessage(jsonStr)
-		doc.JsonData = &b
-	}
-
-	// Устанавливаем ID пользователя и генерируем ID документа
-	doc.OwnerID = userID
-	if doc.ID == uuid.Nil {
-		doc.ID = uuid.New()
-	}
-
-	// Обрабатываем файл
-	file, header, err := r.FormFile("file")
-	if err != nil && !errors.Is(err, http.ErrMissingFile) {
-		return nil, fmt.Errorf("не удалось прочитать файл: %w", err)
-	}
-
-	if file != nil {
-		defer file.Close()
-
-		// Сохраняем файл на диск
-		filename := doc.ID.String() + "-" + filepath.Base(header.Filename)
-		savedPath := filepath.Join(fileFolder, filename)
-
-		outFile, err := os.Create(savedPath)
-		if err != nil {
-			return nil, fmt.Errorf("не удалось сохранить файл: %w", err)
-		}
-		defer outFile.Close()
-
-		_, err = io.Copy(outFile, file)
-		if err != nil {
-			return nil, fmt.Errorf("не удалось сохранить файл: %w", err)
-		}
-
-		// Валидация MIME
-		ext := filepath.Ext(header.Filename)
-		guessed := mime.TypeByExtension(ext)
-		contentType := header.Header.Get("Content-Type")
-		if contentType == "" {
-			contentType = guessed
-		}
-
-		doc.File = true
-		doc.FilePath = savedPath
-		doc.Name = header.Filename
-		doc.Mime = contentType
-	} else {
-		doc.File = false
-		doc.FilePath = ""
-	}
-
-	// Создаём документ в БД
-	if err := s.CreateDocument(ctx, &doc); err != nil {
-		return nil, fmt.Errorf("не удалось создать документ: %w", err)
-	}
-
-	return &doc, nil
-}
-
-// DeleteDocumentForUser удаляет документ с проверкой прав доступа и удалением файла с диска
+// Удалить документ пользователя
 func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error {
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
@@ -157,7 +78,7 @@ func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid
 	return nil
 }
 
-// ListDocuments возвращает список документов с поддержкой фильтров и публичных документов
+// Возвращаем список документов с поддержкой фильтров и публичных документов
 func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFilters) ([]*Document, error) {
 	if filters.Login != "" {
 		// Публичные документы другого пользователя
