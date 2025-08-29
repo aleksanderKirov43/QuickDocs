@@ -5,11 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"mime"
-	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"quickdocs/internal/cache"
@@ -18,6 +14,7 @@ import (
 	"github.com/google/uuid"
 )
 
+// Для добавления уникального ID на каждый HTTP в контекст
 func ctxReqID(ctx context.Context) string {
 	if v := ctx.Value("reqID"); v != nil {
 		if s, ok := v.(string); ok {
@@ -36,7 +33,7 @@ func NewService(repo DocumentRepository, cache cache.FileCache) *Service {
 	return &Service{repo: repo, cache: cache}
 }
 
-// CreateDocument создаёт новый документ в БД и инвалидирует кэш списка документов пользователя
+// Создаём новый документ в БД и инвалидирует кэш списка документов пользователя
 func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
 	if err := s.repo.Create(ctx, doc); err != nil {
 		log.Logger.Printf("req=%s docs.CreateDocument error: id=%s owner=%d err=%v", ctxReqID(ctx), doc.ID, doc.OwnerID, err)
@@ -46,7 +43,6 @@ func (s *Service) CreateDocument(ctx context.Context, doc *Document) error {
 	log.Logger.Printf("req=%s docs.CreateDocument ok: id=%s owner=%d", ctxReqID(ctx), doc.ID, doc.OwnerID)
 	return nil
 }
-
 
 // Удалить документ пользователя
 func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid.UUID) error {
@@ -59,7 +55,6 @@ func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid
 		return fmt.Errorf("доступ запрещён")
 	}
 
-	// Удаляем документ из БД
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return fmt.Errorf("не удалось удалить документ: %w", err)
 	}
@@ -71,7 +66,6 @@ func (s *Service) DeleteDocumentForUser(ctx context.Context, userID int, id uuid
 		}
 	}
 
-	// Инвалидируем кэши
 	_ = s.cache.InvalidateUserFiles(ctx, doc.OwnerID)
 	_ = s.cache.InvalidateFile(ctx, doc.OwnerID, id.String())
 
@@ -129,8 +123,8 @@ func (s *Service) ListDocuments(ctx context.Context, userID int, filters ListFil
 	return docs, nil
 }
 
-// GetFileBytes возвращает байты файла с проверкой прав доступа и использованием кэширования
-func (s *Service) GetFileBytes(ctx context.Context, userID int, id uuid.UUID) ([]byte, error) {
+// Возвращаем файл с проверкой прав доступа и использованием кэширования
+func (s *Service) GetDocument(ctx context.Context, userID int, id uuid.UUID) ([]byte, error) {
 	// Получаем документ с проверкой прав
 	doc, err := s.repo.Get(ctx, id)
 	if err != nil || doc == nil {
